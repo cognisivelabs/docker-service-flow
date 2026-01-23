@@ -25,8 +25,7 @@ function startBackend() {
     console.log('Starting G-Flow Backend...');
     // We launch it in 'sniffer' mode. 
     // TODO: In the future, this should be configurable from the Settings UI.
-    // For now, using the known working interface for your Mac.
-    const command = `INTERFACE=br-d0998eaab09d "${backendPath}" -mode sniffer`;
+    const command = `"${backendPath}" -mode sniffer`;
 
     sudo.exec(command, sudoOptions, (error, stdout, stderr) => {
         if (error) {
