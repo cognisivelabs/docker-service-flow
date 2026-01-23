@@ -1,0 +1,36 @@
+services:
+  # 1. Main Backend (Server Mode)
+  # Reachable via localhost:8085 (Bridge Mode)
+  backend:
+    build:
+      context: ./backend
+    command: [ "./g-flow-backend", "-mode", "server" ]
+    ports:
+      - "8085:8085"
+    environment:
+      - INTERFACE=${INTERFACE:-any}
+
+  # 2. Packet Sniffer (Host Mode)
+  # Sniffs host interfaces and forwards events to Backend
+  sniffer:
+    build:
+      context: ./backend
+    command: [ "./g-flow-backend", "-mode", "sniffer", "-server-url", "http://127.0.0.1:8085/api/events" ]
+    # Host mode is required to see Docker bridge traffic on Mac/Windows VM
+    network_mode: host
+    privileged: true
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - INTERFACE=${INTERFACE:-any}
+    # Note: 'depends_on' doesn't work well with network_mode: host across networks
+
+  frontend:
+    build:
+      context: ./frontend
+    ports:
+      - "3005:3000"
+    environment:
+      - NEXT_PUBLIC_WS_URL=ws://localhost:8085/ws
+    depends_on:
+      - backend
