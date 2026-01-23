@@ -16,26 +16,49 @@ const { exec } = require('child_process');
 let mainWindow;
 const backendPath = path.join(__dirname, 'resources', 'g-flow-engine');
 
+const os = require('os');
+
 // Sudo options
 const sudoOptions = {
     name: 'GFlow Desktop',
 };
 
-function startBackend() {
-    console.log('Starting G-Flow Backend...');
-    // We launch it in 'sniffer' mode. 
-    // TODO: In the future, this should be configurable from the Settings UI.
-    const command = `"${backendPath}" -mode sniffer`;
+// IPC Handlers
+ipcMain.handle('get-interfaces', async () => {
+    const interfaces = os.networkInterfaces();
+    const list = Object.keys(interfaces).map(name => ({
+        name,
+        addresses: interfaces[name].map(a => a.address)
+    }));
+    return list;
+});
+
+ipcMain.handle('start-sniffer', async (event, interfaceName) => {
+    const targetInterface = interfaceName || 'eth0';
+    console.log(`Starting sniffer on interface: ${targetInterface}`);
+    const command = `INTERFACE=${targetInterface} "${backendPath}" -mode sniffer`;
+
+    // Notify UI
+    mainWindow.webContents.send('backend-status', 'starting');
 
     sudo.exec(command, sudoOptions, (error, stdout, stderr) => {
         if (error) {
-            console.warn('Local Backend failed to start (Expected on Mac/Windows with Docker Desktop):', error.message);
-            console.log('App will attempt to connect to Dockerized Backend at localhost:8085');
+            console.warn('Backend failed:', error.message);
+            mainWindow.webContents.send('backend-status', 'failed', error.message);
+            // Fallback to client mode hint
+            mainWindow.webContents.send('backend-log', 'Local sniffer failed. Connecting to Dockerized backend...');
             return;
         }
-        console.log('Local Backend started successfully.');
+        console.log('Backend started.');
+        mainWindow.webContents.send('backend-status', 'running');
+        mainWindow.webContents.send('backend-log', stdout);
     });
-}
+});
+
+ipcMain.handle('stop-sniffer', async () => {
+    exec('pkill g-flow-engine');
+    mainWindow.webContents.send('backend-status', 'stopped');
+});
 
 function createWindow() {
     mainWindow = new BrowserWindow({
@@ -53,11 +76,7 @@ function createWindow() {
     // Always load the built static file for now to verify the desktop build
     mainWindow.loadFile(path.join(__dirname, '../frontend/out/index.html'));
 
-    // Start the backend AFTER the window is created (or before, depending on preference)
-    // Asking for sudo right on launch might be aggressive. 
-    // Better UX: Wait for user to click "Start Monitoring" in UI.
-    // For now, let's just auto-start to prove the concept.
-    startBackend();
+    // Note: Auto-start removed. User must click "Start" in UI.
 
     mainWindow.on('closed', () => {
         mainWindow = null;
