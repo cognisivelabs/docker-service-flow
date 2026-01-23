@@ -17,5 +17,8 @@
     "electron": "^40.0.0",
     "electron-builder": "^26.4.0",
     "wait-on": "^9.0.3"
+  },
+  "dependencies": {
+    "sudo-prompt": "^9.2.1"
   }
 }
