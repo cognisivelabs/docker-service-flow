@@ -1,5 +1,15 @@
 const { app, BrowserWindow, ipcMain } = require('electron');
 const path = require('path');
+const util = require('util');
+
+// Polyfill util.isObject and util.isFunction for sudo-prompt compatibility
+if (!util.isObject) {
+    util.isObject = (arg) => typeof arg === 'object' && arg !== null;
+}
+if (!util.isFunction) {
+    util.isFunction = (arg) => typeof arg === 'function';
+}
+
 const sudo = require('sudo-prompt');
 const { exec } = require('child_process');
 
@@ -8,22 +18,23 @@ const backendPath = path.join(__dirname, 'resources', 'g-flow-engine');
 
 // Sudo options
 const sudoOptions = {
-    name: 'G-Flow Desktop',
+    name: 'GFlow Desktop',
 };
 
 function startBackend() {
     console.log('Starting G-Flow Backend...');
     // We launch it in 'sniffer' mode. 
-    // Note: In production, you might want to stream logs to the UI.
-    const command = `"${backendPath}" -mode sniffer`;
+    // TODO: In the future, this should be configurable from the Settings UI.
+    // For now, using the known working interface for your Mac.
+    const command = `INTERFACE=br-d0998eaab09d "${backendPath}" -mode sniffer`;
 
     sudo.exec(command, sudoOptions, (error, stdout, stderr) => {
         if (error) {
-            console.error('Backend failed to start:', error);
-            // In a real app, send this error to the UI
+            console.warn('Local Backend failed to start (Expected on Mac/Windows with Docker Desktop):', error.message);
+            console.log('App will attempt to connect to Dockerized Backend at localhost:8085');
+            return;
         }
-        console.log('Backend stdout:', stdout);
-        console.log('Backend stderr:', stderr);
+        console.log('Local Backend started successfully.');
     });
 }
 
@@ -40,14 +51,8 @@ function createWindow() {
         }
     });
 
-    const isDev = process.env.NODE_ENV === 'development';
-
-    if (isDev) {
-        mainWindow.loadURL('http://localhost:3000');
-        mainWindow.webContents.openDevTools();
-    } else {
-        mainWindow.loadFile(path.join(__dirname, '../frontend/out/index.html'));
-    }
+    // Always load the built static file for now to verify the desktop build
+    mainWindow.loadFile(path.join(__dirname, '../frontend/out/index.html'));
 
     // Start the backend AFTER the window is created (or before, depending on preference)
     // Asking for sudo right on launch might be aggressive. 
