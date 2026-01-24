@@ -7,6 +7,7 @@ const nextConfig: NextConfig = {
   images: {
     unoptimized: true,
   },
+  transpilePackages: ['react-sequence-kit'],
 };
 
 export default nextConfig;

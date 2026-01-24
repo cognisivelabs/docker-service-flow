@@ -6,11 +6,13 @@ import { FlowCanvas } from '@/components/FlowCanvas';
 import { LiveFeed } from '@/components/LiveFeed';
 import { SequenceView } from '@/components/SequenceView';
 import { LogPanel } from '@/components/LogPanel';
-import { LayoutGrid, ListTree, Activity, Globe } from 'lucide-react';
+import { SettingsModal } from './SettingsModal';
+import { Settings, LayoutGrid, ListTree, Activity } from 'lucide-react';
 
 export default function Dashboard() {
     const { events, isConnected } = useWebSocket('ws://localhost:8085/ws');
     const [view, setView] = useState<'flow' | 'sequence'>('flow');
+    const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
     return (
         <div className="flex flex-col h-screen bg-slate-900 font-sans selection:bg-blue-500/30">
@@ -50,12 +52,23 @@ export default function Dashboard() {
 
                 <div className="flex items-center gap-4">
                     <div className="text-right hidden sm:block">
-                        <p className="text-[10px] text-slate-500 uppercase font-bold">Scanning Interface</p>
-                        <p className="text-xs text-slate-300 font-mono">docker0</p>
+                        <p className="text-[10px] text-slate-500 uppercase font-bold">Scanning</p>
+                        <p className="text-xs text-slate-300 font-mono">
+                            <button onClick={() => setIsSettingsOpen(true)} className="hover:text-white underline decoration-slate-600 underline-offset-2">
+                                Configure
+                            </button>
+                        </p>
                     </div>
-                    <Globe className="w-5 h-5 text-slate-500" />
+                    <button
+                        onClick={() => setIsSettingsOpen(true)}
+                        className="p-2 hover:bg-slate-800 rounded-full text-slate-400 hover:text-white transition-colors"
+                    >
+                        <Settings className="w-5 h-5" />
+                    </button>
                 </div>
             </header>
+
+            <SettingsModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} />
 
             {/* Main Content */}
             <main className="flex flex-1 overflow-hidden">

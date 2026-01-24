@@ -26,10 +26,57 @@ const sudoOptions = {
 // IPC Handlers
 ipcMain.handle('get-interfaces', async () => {
     const interfaces = os.networkInterfaces();
-    const list = Object.keys(interfaces).map(name => ({
-        name,
-        addresses: interfaces[name].map(a => a.address)
-    }));
+    const list = [];
+
+    Object.keys(interfaces).forEach(name => {
+        const details = interfaces[name];
+        // Filter out obviously inactive ones if needed, but keeping all is safer.
+        // We prioritize IPv4
+        const ipv4 = details.find(d => d.family === 'IPv4');
+        const address = ipv4 ? ipv4.address : (details[0]?.address || '');
+
+        // Heuristics for type
+        let type = 'Other';
+        let icon = 'network';
+        const lowerName = name.toLowerCase();
+
+        if (lowerName.startsWith('docker') || lowerName.startsWith('br-') || lowerName.includes('vethernet')) {
+            type = 'Docker Bridge';
+            icon = 'docker';
+        } else if (lowerName === 'lo' || lowerName === 'lo0') {
+            type = 'Loopback';
+            icon = 'loopback';
+        } else if (lowerName.startsWith('en') || lowerName.startsWith('eth') || lowerName.startsWith('wl')) {
+            type = 'Physical (Wi-Fi/Ethernet)';
+            icon = 'physical';
+        } else if (lowerName.startsWith('utun') || lowerName.startsWith('tun')) {
+            type = 'VPN / Tunnel';
+            icon = 'vpn';
+        } else if (lowerName.startsWith('awdl') || lowerName.startsWith('llw')) {
+            type = 'System / Internal';
+            icon = 'system';
+        }
+
+        list.push({
+            name,
+            address,
+            type,
+            icon,
+            details // keep full details just in case
+        });
+    });
+
+    // Sort: Docker first, then Physical, then others
+    list.sort((a, b) => {
+        const score = (type) => {
+            if (type === 'Docker Bridge') return 0;
+            if (type === 'Physical (Wi-Fi/Ethernet)') return 1;
+            if (type === 'Loopback') return 2;
+            return 3;
+        };
+        return score(a.type) - score(b.type);
+    });
+
     return list;
 });
 
