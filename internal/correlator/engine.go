@@ -257,6 +257,11 @@ func (e *Engine) handleResponse(event RawEvent) {
 
 	flow, ok := e.activeFlows[call.FlowID]
 	if !ok {
+		// The flow settled before this response arrived; still publish the result
+		// so the call doesn't show as pending forever.
+		if flow := e.completedFlows.Find(call.FlowID); flow != nil {
+			e.broadcast("flow_complete", flow)
+		}
 		return
 	}
 	flow.UpdatedAt = now
@@ -359,6 +364,16 @@ func (rb *ringBuffer) Push(flow *Flow) {
 	if rb.count < rb.cap {
 		rb.count++
 	}
+}
+
+// Find returns the stored flow with the given ID, or nil if it has been evicted.
+func (rb *ringBuffer) Find(flowID string) *Flow {
+	for _, f := range rb.items {
+		if f != nil && f.FlowID == flowID {
+			return f
+		}
+	}
+	return nil
 }
 
 func (rb *ringBuffer) Len() int {

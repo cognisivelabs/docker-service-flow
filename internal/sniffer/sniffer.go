@@ -111,12 +111,33 @@ func (s *Sniffer) Start() error {
 
 	go s.cleanupStaleRequests()
 	go s.flushStalePartials()
+	go reportDrops(handle)
 
 	packetSource := gopacket.NewPacketSource(handle, handle.LinkType())
 	for packet := range packetSource.Packets() {
 		s.processPacket(packet)
 	}
 	return nil
+}
+
+// reportDrops logs whenever the capture reports newly dropped packets, which
+// mean missed requests or responses.
+func reportDrops(handle *pcap.Handle) {
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
+	var lastDropped, lastIfDropped int
+	for range ticker.C {
+		stats, err := handle.Stats()
+		if err != nil {
+			return
+		}
+		if stats.PacketsDropped > lastDropped || stats.PacketsIfDropped > lastIfDropped {
+			log.Printf("Sniffer: capture dropped packets (received %d, dropped %d, interface dropped %d)",
+				stats.PacketsReceived, stats.PacketsDropped, stats.PacketsIfDropped)
+			lastDropped, lastIfDropped = stats.PacketsDropped, stats.PacketsIfDropped
+		}
+	}
 }
 
 func (s *Sniffer) cleanupStaleRequests() {
@@ -196,6 +217,15 @@ func (s *Sniffer) processPacket(packet gopacket.Packet) {
 	// which may be reused by a later connection with a different sequence space.
 	if tcp.SYN || tcp.FIN || tcp.RST {
 		s.resetStream(reqKey)
+	}
+	// Once a side closes, no more of its data is coming: emit whatever it had
+	// buffered (after this segment's own payload) instead of waiting for the
+	// timeout. A reset aborts both directions, e.g. a client hanging up mid-response.
+	if tcp.FIN || tcp.RST {
+		defer s.flushPartial(reqKey)
+	}
+	if tcp.RST {
+		defer s.flushPartial(respKey)
 	}
 
 	payload := tcp.Payload

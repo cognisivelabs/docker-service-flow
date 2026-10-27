@@ -384,3 +384,25 @@ func TestStaleRequestTTLCleanup(t *testing.T) {
 		t.Errorf("expected 0 pending calls after TTL cleanup, got %d", pendingCount)
 	}
 }
+
+func TestLateResponseAfterSettlingIsPublished(t *testing.T) {
+	b := &mockBroadcaster{}
+	// Settles after 100ms; pending requests live 5s (as in production, well past settling).
+	e := NewEngineWithConfig(b, 50*time.Millisecond, 100*time.Millisecond, 5*time.Second)
+
+	e.HandleEvent(makeRequestEvent("gateway", "stock", "GET", "/stock", "10.0.0.1", "50000", "10.0.0.2", "8000"))
+	time.Sleep(700 * time.Millisecond) // settle (100ms) + maintenance tick (500ms)
+	b.reset()
+
+	e.HandleEvent(makeResponseEvent("10.0.0.2", "8000", "10.0.0.1", "50000", "200", 3))
+
+	msg := b.lastMessage()
+	if msg == nil || msg.Type != "flow_complete" {
+		t.Fatalf("expected a flow_complete broadcast for the late response, got %+v", msg)
+	}
+	var flow Flow
+	json.Unmarshal(msg.Payload, &flow)
+	if flow.Calls[0].Status != "200" {
+		t.Errorf("published call status = %q, want 200", flow.Calls[0].Status)
+	}
+}
