@@ -93,44 +93,51 @@ The `docker-compose.yml` runs both from the same image.
 ## Prerequisites
 
 - **Docker & Docker Compose** — that's all for running it
-- **Go 1.24.4+ and Node.js 20.9+** — only for building and testing outside Docker
+- **Go 1.24.4+** — only for building and testing outside Docker (uses `vendor/`, no module downloads)
+- **Node.js 20.9+** — only for changing the frontend
 
 ## Building Behind a Package Mirror (e.g. Nexus)
 
-Everything not available from public package registries is in the repo: the
-sequence diagram library is vendored in `web/src/lib/react-sequence-kit/` and the
-Geist fonts are bundled in `web/src/app/fonts/` (no Google Fonts fetch at build
-time). Everything else comes from four kinds of public source, each of which can
-be pointed at a mirror:
+**The image build needs no npm registry, Node.js or Go module proxy.** Everything
+the code depends on is in the repo:
+
+- `web/out/`: the frontend, pre-built (static HTML/JS/CSS, about 1.2 MB), embedded
+  into the Go binary
+- `vendor/`: the Go modules (about 7 MB, with their licences); the Go compile step
+  runs with networking disabled
+- `web/src/lib/react-sequence-kit/` and `web/src/app/fonts/`: the sequence diagram
+  library and Geist fonts, which aren't on any public registry
+
+The build pulls only from two kinds of public source, each of which can be pointed
+at a mirror:
 
 | Source | Used for | Override |
 |--------|----------|----------|
-| Docker Hub | `node`, `golang`, `alpine` base images (pinned tags) | `BASE_REGISTRY` (prefix, with trailing `/`) |
-| npm registry | frontend packages (`web/package-lock.json`) | `NPM_REGISTRY` |
-| Go module proxy | backend modules (`go.sum`) | `GOPROXY`, `GOSUMDB` (`off` if unreachable) |
+| Docker Hub | `golang`, `alpine` base images (pinned tags) | `BASE_REGISTRY` (prefix, with trailing `/`) |
 | Alpine packages | `libpcap`, `gcc`, `musl-dev` | `ALPINE_MIRROR` |
 
 Put the overrides in a `.env` file next to `docker-compose.yml`:
 
 ```bash
 BASE_REGISTRY=nexus.example.gov:8082/
-NPM_REGISTRY=https://nexus.example.gov/repository/npm-proxy/
-GOPROXY=https://nexus.example.gov/repository/go-proxy/
-GOSUMDB=off
 ALPINE_MIRROR=https://nexus.example.gov/repository/alpine-proxy
 ```
 
-then run `docker compose up -d --build` as usual. For builds outside Docker,
-configure npm (`npm config set registry …`) and Go (`GOPROXY`, `GOSUMDB`)
-the same way. Next.js telemetry is disabled in the image and the Makefile, and
-the running app makes no outbound calls.
+then run `docker compose up -d --build` as usual. The running app makes no
+outbound calls.
+
+To build the frontend from source inside Docker instead (needs an npm registry and
+the `node` base image), set `FRONTEND=build`, plus `NPM_REGISTRY` if you use a
+mirror. Next.js telemetry is disabled in the image and the Makefile.
 
 ## Development
 
 ```bash
-make build      # Build Go binary locally (needs Go 1.24+ and Node.js 20+)
+make build      # Build Go binary locally (embeds the committed web/out)
 make test       # Run all tests (Go + frontend)
-make frontend   # Build the static frontend into web/out
+make frontend   # Rebuild web/out (in Docker) after changing web/ — commit the result
+make frontend-check  # Fail if the committed web/out is stale
+make vendor     # Refresh vendor/ after changing go.mod — commit the result
 make up         # docker compose up -d --build
 make down       # docker compose down
 make clean      # Clean build artifacts
