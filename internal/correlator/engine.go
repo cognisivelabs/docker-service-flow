@@ -22,28 +22,30 @@ type Broadcaster interface {
 
 // RawEvent is the event format received from the sniffer via HTTP POST.
 type RawEvent struct {
-	EventType      string            `json:"eventType"`
-	Source         string            `json:"source"`
-	Destination    string            `json:"destination"`
-	Metadata       map[string]string `json:"metadata"`
-	RequestBody    string            `json:"requestBody,omitempty"`
-	RequestHeaders string            `json:"requestHeaders,omitempty"`
-	ResponseStatus string            `json:"status,omitempty"`
-	DurationMs     int64             `json:"durationMs,omitempty"`
-	SrcIP          string            `json:"srcIP,omitempty"`
-	SrcPort        string            `json:"srcPort,omitempty"`
-	DstIP          string            `json:"dstIP,omitempty"`
-	DstPort        string            `json:"dstPort,omitempty"`
+	EventType       string            `json:"eventType"`
+	Source          string            `json:"source"`
+	Destination     string            `json:"destination"`
+	Metadata        map[string]string `json:"metadata"`
+	RequestBody     string            `json:"requestBody,omitempty"`
+	RequestHeaders  string            `json:"requestHeaders,omitempty"`
+	ResponseStatus  string            `json:"status,omitempty"`
+	ResponseHeaders string            `json:"responseHeaders,omitempty"`
+	ResponseBody    string            `json:"responseBody,omitempty"`
+	DurationMs      int64             `json:"durationMs,omitempty"`
+	SrcIP           string            `json:"srcIP,omitempty"`
+	SrcPort         string            `json:"srcPort,omitempty"`
+	DstIP           string            `json:"dstIP,omitempty"`
+	DstPort         string            `json:"dstPort,omitempty"`
 }
 
 type Engine struct {
 	mu             sync.Mutex
-	pendingCalls   map[string]*Call            // tcpKey → Call awaiting response
-	serviceWindow  map[string]*serviceEntry    // serviceName → most recent call where service was destination
-	activeFlows    map[string]*Flow            // flowId → active flow
-	completedFlows ringBuffer                  // completed flows ring buffer
-	callCounter    int                         // for generating call IDs
-	flowCounter    int                         // for generating flow IDs
+	pendingCalls   map[string]*Call         // tcpKey → Call awaiting response
+	serviceWindow  map[string]*serviceEntry // serviceName → most recent call where service was destination
+	activeFlows    map[string]*Flow         // flowId → active flow
+	completedFlows ringBuffer               // completed flows ring buffer
+	callCounter    int                      // for generating call IDs
+	flowCounter    int                      // for generating flow IDs
 	broadcaster    Broadcaster
 
 	causalWindow   time.Duration
@@ -175,6 +177,8 @@ func (e *Engine) handleResponse(event RawEvent) {
 
 	call.Status = event.ResponseStatus
 	call.DurationMs = event.DurationMs
+	call.ResponseHeaders = event.ResponseHeaders
+	call.ResponseBody = event.ResponseBody
 	call.EndTime = now
 
 	flow, ok := e.activeFlows[call.FlowID]

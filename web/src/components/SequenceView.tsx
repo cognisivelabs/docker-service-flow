@@ -1,37 +1,165 @@
 "use client";
 
 import React, { useMemo } from 'react';
-import { Flow } from '@/types/flow';
-import { SequenceDiagram, type Actor, type Message, DEFAULT_THEME } from '../lib/react-sequence-kit';
+import { Flow, Call } from '@/types/flow';
+import { callsOverlap } from '@/utils/flow';
+import { SequenceDiagram, type Actor, type Message, type Fragment, DEFAULT_THEME } from 'react-sequence-kit';
 
 interface SequenceViewProps {
     flow: Flow | null;
 }
 
-export const SequenceView = ({ flow }: SequenceViewProps) => {
-    const { actors, messages } = useMemo(() => {
-        if (!flow) return { actors: [], messages: [] };
+/**
+ * Collapse consecutive identical calls into one representative + loop fragment.
+ */
+function detectLoops(calls: Call[]): { collapsed: Call[]; fragments: Fragment[] } {
+    const collapsed: Call[] = [];
+    const fragments: Fragment[] = [];
 
-        const uniqueServices = new Set<string>();
-        const msgs: Message[] = [];
+    let i = 0;
+    while (i < calls.length) {
+        const current = calls[i];
+        const key = `${current.source}->${current.destination}:${current.method}:${current.path}`;
+
+        let count = 1;
+        while (i + count < calls.length) {
+            const next = calls[i + count];
+            const nextKey = `${next.source}->${next.destination}:${next.method}:${next.path}`;
+            if (nextKey === key) {
+                count++;
+            } else {
+                break;
+            }
+        }
+
+        if (count >= 2) {
+            const representative = { ...current };
+            collapsed.push(representative);
+            fragments.push({
+                id: `loop-${representative.callId}`,
+                type: 'loop',
+                label: `${count}x`,
+                startMessageId: `${representative.callId}-req`,
+                endMessageId: representative.status && representative.status !== 'pending'
+                    ? `${representative.callId}-resp`
+                    : `${representative.callId}-req`,
+            });
+            i += count;
+        } else {
+            collapsed.push(current);
+            i++;
+        }
+    }
+
+    return { collapsed, fragments };
+}
+
+/**
+ * Detect parallel calls: same source, different destinations, and in flight at
+ * the same time as every other call in the group. Groups them into a par fragment.
+ */
+function detectParallel(calls: Call[]): Fragment[] {
+    const fragments: Fragment[] = [];
+    const used = new Set<number>();
+
+    for (let i = 0; i < calls.length; i++) {
+        if (used.has(i)) continue;
+
+        const current = calls[i];
+        const parallelGroup: number[] = [i];
+
+        for (let j = i + 1; j < calls.length; j++) {
+            if (used.has(j)) continue;
+            const candidate = calls[j];
+
+            if (
+                candidate.source === current.source &&
+                parallelGroup.every(idx =>
+                    calls[idx].destination !== candidate.destination && callsOverlap(calls[idx], candidate))
+            ) {
+                parallelGroup.push(j);
+            }
+        }
+
+        if (parallelGroup.length >= 2) {
+            parallelGroup.forEach(idx => used.add(idx));
+
+            const firstCall = calls[parallelGroup[0]];
+            const lastCall = calls[parallelGroup[parallelGroup.length - 1]];
+
+            const endMsgId = lastCall.status && lastCall.status !== 'pending'
+                ? `${lastCall.callId}-resp`
+                : `${lastCall.callId}-req`;
+
+            fragments.push({
+                id: `par-${firstCall.callId}`,
+                type: 'par',
+                label: `${parallelGroup.length} concurrent`,
+                startMessageId: `${firstCall.callId}-req`,
+                endMessageId: endMsgId,
+                operands: parallelGroup.slice(1).map(idx => ({
+                    condition: calls[idx].destination,
+                    atMessageId: `${calls[idx].callId}-req`,
+                })),
+            });
+        }
+    }
+
+    return fragments;
+}
+
+/**
+ * Detect alt fragments: calls that returned error status codes.
+ * Wraps the error call in an alt [success/error] box.
+ */
+function detectAlt(calls: Call[]): Fragment[] {
+    const fragments: Fragment[] = [];
+
+    calls.forEach(call => {
+        if (call.status && (call.status.startsWith('4') || call.status.startsWith('5'))) {
+            fragments.push({
+                id: `alt-${call.callId}`,
+                type: 'alt',
+                label: 'response',
+                startMessageId: `${call.callId}-req`,
+                endMessageId: `${call.callId}-resp`,
+                operands: [{
+                    condition: `error ${call.status}`,
+                    atMessageId: `${call.callId}-resp`,
+                }],
+            });
+        }
+    });
+
+    return fragments;
+}
+
+export const SequenceView = ({ flow }: SequenceViewProps) => {
+    const { actors, messages, fragments } = useMemo(() => {
+        if (!flow) return { actors: [], messages: [], fragments: [] };
 
         const sortedCalls = [...flow.calls].sort((a, b) => a.order - b.order);
 
-        sortedCalls.forEach((call, index) => {
+        // Step 1: Collapse loops
+        const { collapsed, fragments: loopFragments } = detectLoops(sortedCalls);
+
+        // Step 2: Build messages from collapsed calls
+        const uniqueServices = new Set<string>();
+        const msgs: Message[] = [];
+
+        collapsed.forEach((call, index) => {
             uniqueServices.add(call.source);
             uniqueServices.add(call.destination);
 
-            // Request arrow
             msgs.push({
                 id: `${call.callId}-req`,
                 from: call.source,
                 to: call.destination,
                 label: `${call.method} ${call.path}`.trim() || 'Traffic',
-                type: 'sync',
+                type: call.source === call.destination ? 'async' : 'sync',
                 order: index * 2,
             });
 
-            // Reply arrow (if we have a response)
             if (call.status && call.status !== 'pending') {
                 msgs.push({
                     id: `${call.callId}-resp`,
@@ -44,15 +172,23 @@ export const SequenceView = ({ flow }: SequenceViewProps) => {
             }
         });
 
+        // Step 3: Detect par fragments
+        const parFragments = detectParallel(collapsed);
+
+        // Step 4: Detect alt fragments (error responses)
+        const altFragments = detectAlt(collapsed);
+
+        // Combine all fragments
+        const allFragments = [...loopFragments, ...parFragments, ...altFragments];
+
         const actorList: Actor[] = Array.from(uniqueServices)
             .map((name, i) => ({
                 id: name,
                 name: name,
-                stereotype: 'actor' as const,
                 order: i,
             }));
 
-        return { actors: actorList, messages: msgs };
+        return { actors: actorList, messages: msgs, fragments: allFragments };
     }, [flow]);
 
     return (
@@ -61,6 +197,7 @@ export const SequenceView = ({ flow }: SequenceViewProps) => {
                 <SequenceDiagram
                     actors={actors}
                     messages={messages}
+                    fragments={fragments.length > 0 ? fragments : undefined}
                     config={{
                         actorSpacing: 250,
                         messageHeight: 60,

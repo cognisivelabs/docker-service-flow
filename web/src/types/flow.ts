@@ -12,6 +12,8 @@ export interface Call {
   order: number;
   requestHeaders?: string;
   requestBody?: string;
+  responseHeaders?: string;
+  responseBody?: string;
 }
 
 export interface Flow {

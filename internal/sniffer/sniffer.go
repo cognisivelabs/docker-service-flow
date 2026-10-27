@@ -1,8 +1,14 @@
 package sniffer
 
 import (
+	"bytes"
+	"compress/flate"
+	"compress/gzip"
+	"compress/zlib"
 	"fmt"
+	"io"
 	"log"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -30,6 +36,7 @@ type Sniffer struct {
 	output         OutputChannel
 	mu             sync.Mutex
 	activeRequests map[string]pendingRequest
+	partials       map[string]*partialMessage
 }
 
 type TrafficEvent struct {
@@ -40,6 +47,8 @@ type TrafficEvent struct {
 	RequestBody          string            `json:"requestBody,omitempty"`
 	RequestHeaders       string            `json:"requestHeaders,omitempty"`
 	ResponseStatus       string            `json:"status,omitempty"`
+	ResponseHeaders      string            `json:"responseHeaders,omitempty"`
+	ResponseBody         string            `json:"responseBody,omitempty"`
 	DurationMilliseconds int64             `json:"durationMs,omitempty"`
 	SrcIP                string            `json:"srcIP,omitempty"`
 	SrcPort              string            `json:"srcPort,omitempty"`
@@ -53,12 +62,28 @@ type pendingRequest struct {
 	startTime time.Time
 }
 
+// partialMessage is an HTTP message whose body spans more TCP segments than
+// we've seen so far. It is emitted once complete, capped or stale.
+type partialMessage struct {
+	event     TrafficEvent
+	raw       strings.Builder
+	firstSeen time.Time
+}
+
+const (
+	// maxBufferedLen caps how much of one message we reassemble.
+	maxBufferedLen = 64 * 1024
+	// partialTimeout is how long we wait for the rest of a body before emitting what we have.
+	partialTimeout = 2 * time.Second
+)
+
 func NewSniffer(device string, resolver ServiceResolver, output OutputChannel) *Sniffer {
 	return &Sniffer{
 		device:         device,
 		resolver:       resolver,
 		output:         output,
 		activeRequests: make(map[string]pendingRequest),
+		partials:       make(map[string]*partialMessage),
 	}
 }
 
@@ -76,6 +101,7 @@ func (s *Sniffer) Start() error {
 	log.Printf("Sniffer started on %s", s.device)
 
 	go s.cleanupStaleRequests()
+	go s.flushStalePartials()
 
 	packetSource := gopacket.NewPacketSource(handle, handle.LinkType())
 	for packet := range packetSource.Packets() {
@@ -97,6 +123,27 @@ func (s *Sniffer) cleanupStaleRequests() {
 			}
 		}
 		s.mu.Unlock()
+	}
+}
+
+func (s *Sniffer) flushStalePartials() {
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		now := time.Now()
+		var stale []*partialMessage
+		s.mu.Lock()
+		for key, p := range s.partials {
+			if now.Sub(p.firstSeen) > partialTimeout {
+				stale = append(stale, p)
+				delete(s.partials, key)
+			}
+		}
+		s.mu.Unlock()
+		for _, p := range stale {
+			s.emitMessage(p.event, p.raw.String())
+		}
 	}
 }
 
@@ -144,25 +191,23 @@ func (s *Sniffer) processPacket(packet gopacket.Packet) {
 	reqKey := srcIP + ":" + tcp.SrcPort.String() + "-" + dstIP + ":" + tcp.DstPort.String()
 	respKey := dstIP + ":" + tcp.DstPort.String() + "-" + srcIP + ":" + tcp.SrcPort.String()
 
-	if len(parts) >= 2 && isHTTPMethod(parts[0]) {
+	isRequest := len(parts) >= 2 && isHTTPMethod(parts[0])
+	isResponse := len(parts) >= 2 && strings.HasPrefix(parts[0], "HTTP/")
+
+	// A segment that doesn't start a new message continues a buffered one.
+	if !isRequest && !isResponse {
+		s.appendToPartial(reqKey, payloadStr)
+		return
+	}
+	// A new message on this direction means any buffered one is as complete as it'll get.
+	s.flushPartial(reqKey)
+
+	if isRequest {
 		method := parts[0]
 		path := parts[1]
 
 		if strings.Contains(path, "health") || strings.Contains(path, "metrics") || strings.Contains(path, "ready") || strings.Contains(path, "live") {
 			return
-		}
-
-		headers := ""
-		body := ""
-		if sections := strings.Split(payloadStr, "\r\n\r\n"); len(sections) > 1 {
-			headerLines := strings.Split(sections[0], "\r\n")
-			if len(headerLines) > 1 {
-				headers = strings.Join(headerLines[1:], "\r\n")
-			}
-			body = sections[1]
-			if len(body) > 5000 {
-				body = body[:5000] + "..."
-			}
 		}
 
 		s.mu.Lock()
@@ -181,19 +226,20 @@ func (s *Sniffer) processPacket(packet gopacket.Packet) {
 			Source:         srcService,
 			Destination:    dstService,
 			Metadata:       metadata,
-			RequestBody:    body,
-			RequestHeaders: headers,
 			ResponseStatus: "Pending...",
 			SrcIP:          srcIP,
 			SrcPort:        tcp.SrcPort.String(),
 			DstIP:          dstIP,
 			DstPort:        tcp.DstPort.String(),
 		}
-		s.emit(event)
+		s.bufferOrEmit(reqKey, event, payloadStr)
 		return
 	}
 
-	if len(parts) >= 2 && strings.HasPrefix(parts[0], "HTTP/") {
+	if isResponse {
+		// The request must reach the correlator before its response does.
+		s.flushPartial(respKey)
+
 		s.mu.Lock()
 		pending, exists := s.activeRequests[respKey]
 		if exists {
@@ -218,8 +264,188 @@ func (s *Sniffer) processPacket(packet gopacket.Packet) {
 				DstIP:                dstIP,
 				DstPort:              tcp.DstPort.String(),
 			}
-			s.emit(event)
+			s.bufferOrEmit(reqKey, event, payloadStr)
 		}
+	}
+}
+
+// bufferOrEmit emits the message now if its body is complete, otherwise holds
+// it under key until the remaining segments arrive.
+func (s *Sniffer) bufferOrEmit(key string, event TrafficEvent, raw string) {
+	if messageComplete(raw) {
+		s.emitMessage(event, raw)
+		return
+	}
+	p := &partialMessage{event: event, firstSeen: time.Now()}
+	p.raw.WriteString(raw)
+	s.mu.Lock()
+	s.partials[key] = p
+	s.mu.Unlock()
+}
+
+// appendToPartial adds a continuation segment to the message buffered under key.
+func (s *Sniffer) appendToPartial(key, segment string) {
+	s.mu.Lock()
+	p, ok := s.partials[key]
+	if !ok {
+		s.mu.Unlock()
+		return
+	}
+	p.raw.WriteString(segment)
+	raw := p.raw.String()
+	done := messageComplete(raw)
+	if done {
+		delete(s.partials, key)
+	}
+	s.mu.Unlock()
+
+	if done {
+		s.emitMessage(p.event, raw)
+	}
+}
+
+// flushPartial emits whatever is buffered under key, if anything.
+func (s *Sniffer) flushPartial(key string) {
+	s.mu.Lock()
+	p, ok := s.partials[key]
+	if ok {
+		delete(s.partials, key)
+	}
+	s.mu.Unlock()
+
+	if ok {
+		s.emitMessage(p.event, p.raw.String())
+	}
+}
+
+// emitMessage fills in the headers and body from the raw message and emits the event.
+func (s *Sniffer) emitMessage(event TrafficEvent, raw string) {
+	headers, body := parseHTTPMessage(raw)
+	if event.EventType == "response" {
+		event.ResponseHeaders = headers
+		event.ResponseBody = body
+	} else {
+		event.RequestHeaders = headers
+		event.RequestBody = body
+	}
+	s.emit(event)
+}
+
+// messageComplete reports whether raw holds a full HTTP message (or as much as
+// we're willing to buffer). Messages without Content-Length or chunked framing
+// are treated as complete, since we can't tell where their body ends.
+func messageComplete(raw string) bool {
+	if len(raw) >= maxBufferedLen {
+		return true
+	}
+	head, body, found := strings.Cut(raw, "\r\n\r\n")
+	if !found {
+		return false
+	}
+	_, headers, _ := strings.Cut(head, "\r\n")
+	if strings.Contains(strings.ToLower(headerValue(headers, "Transfer-Encoding")), "chunked") {
+		return strings.HasSuffix(body, "0\r\n\r\n")
+	}
+	if n, err := strconv.Atoi(headerValue(headers, "Content-Length")); err == nil {
+		return len(body) >= n
+	}
+	return true
+}
+
+// maxBodyLen caps captured request/response bodies.
+const maxBodyLen = 5000
+
+// parseHTTPMessage splits a raw (possibly reassembled) HTTP message into
+// its header block (start line excluded) and a display-ready body.
+func parseHTTPMessage(payload string) (headers, body string) {
+	head, rawBody, found := strings.Cut(payload, "\r\n\r\n")
+	if !found {
+		return "", ""
+	}
+	if _, rest, ok := strings.Cut(head, "\r\n"); ok {
+		headers = rest
+	}
+
+	if strings.Contains(strings.ToLower(headerValue(headers, "Transfer-Encoding")), "chunked") {
+		rawBody = decodeChunked(rawBody)
+	}
+	if enc := headerValue(headers, "Content-Encoding"); enc != "" && !strings.EqualFold(enc, "identity") {
+		decoded, err := decompress(enc, rawBody)
+		if err != nil {
+			return headers, fmt.Sprintf("[%s-encoded body, %d bytes captured]", enc, len(rawBody))
+		}
+		rawBody = decoded
+	}
+
+	if len(rawBody) > maxBodyLen {
+		rawBody = rawBody[:maxBodyLen] + "..."
+	}
+	return headers, rawBody
+}
+
+// decompress decodes a gzip or deflate body. Other encodings (e.g. br) are unsupported.
+func decompress(encoding, body string) (string, error) {
+	var r io.Reader
+	switch strings.ToLower(encoding) {
+	case "gzip":
+		gz, err := gzip.NewReader(strings.NewReader(body))
+		if err != nil {
+			return "", err
+		}
+		r = gz
+	case "deflate":
+		// Usually zlib-wrapped per the spec, but some servers send raw deflate.
+		if zr, err := zlib.NewReader(strings.NewReader(body)); err == nil {
+			r = zr
+		} else {
+			r = flate.NewReader(strings.NewReader(body))
+		}
+	default:
+		return "", fmt.Errorf("unsupported encoding %q", encoding)
+	}
+	var out bytes.Buffer
+	if _, err := io.Copy(&out, io.LimitReader(r, maxBodyLen+1)); err != nil && out.Len() == 0 {
+		return "", err
+	}
+	return out.String(), nil
+}
+
+// headerValue returns the value of the first header matching name (case-insensitive).
+func headerValue(headers, name string) string {
+	for _, line := range strings.Split(headers, "\r\n") {
+		k, v, ok := strings.Cut(line, ":")
+		if ok && strings.EqualFold(strings.TrimSpace(k), name) {
+			return strings.TrimSpace(v)
+		}
+	}
+	return ""
+}
+
+// decodeChunked best-effort decodes a chunked transfer-encoded body. Since we
+// only see one TCP segment, a truncated final chunk is returned as-is.
+func decodeChunked(body string) string {
+	var out strings.Builder
+	for {
+		sizeLine, rest, ok := strings.Cut(body, "\r\n")
+		if !ok {
+			return out.String()
+		}
+		sizeStr, _, _ := strings.Cut(sizeLine, ";") // drop chunk extensions
+		var size int
+		if _, err := fmt.Sscanf(strings.TrimSpace(sizeStr), "%x", &size); err != nil {
+			// Not chunk framing after all; return what we have plus the remainder.
+			out.WriteString(body)
+			return out.String()
+		}
+		if size == 0 {
+			return out.String()
+		}
+		if size >= len(rest) {
+			out.WriteString(rest)
+			return out.String()
+		}
+		out.WriteString(rest[:size])
+		body = strings.TrimPrefix(rest[size:], "\r\n")
 	}
 }
 
