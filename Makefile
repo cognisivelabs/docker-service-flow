@@ -1,7 +1,11 @@
 .PHONY: up down build frontend test clean
 
-# Start docker-service-flow (builds frontend, then image + runs)
-up: frontend
+# No outbound calls beyond the configured package registries
+export NEXT_TELEMETRY_DISABLED := 1
+export GOTOOLCHAIN := local
+
+# Start docker-service-flow (builds image + runs)
+up:
 	docker compose up -d --build
 
 # Stop docker-service-flow
