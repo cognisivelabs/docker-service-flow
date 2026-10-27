@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { getFlowLabel, getRootCall, getFlowDuration, formatTime } from './flow';
+import { getFlowLabel, getRootCall, getFlowDuration, formatTime, callsOverlap } from './flow';
 import { Flow, Call } from '@/types/flow';
 
 function makeCall(overrides: Partial<Call> = {}): Call {
@@ -106,5 +106,32 @@ describe('formatTime', () => {
 
     it('returns empty string for invalid input', () => {
         expect(formatTime('not-a-date')).toBe('Invalid Date'.includes('Invalid') ? formatTime('not-a-date') : '');
+    });
+});
+
+describe('callsOverlap', () => {
+    const at = (start: string, end?: string) =>
+        makeCall({ startTime: `2026-01-01T00:00:00.${start}Z`, endTime: end && `2026-01-01T00:00:00.${end}Z` });
+
+    it('detects calls in flight at the same time', () => {
+        expect(callsOverlap(at('100', '200'), at('150', '250'))).toBe(true);
+        expect(callsOverlap(at('150', '250'), at('100', '200'))).toBe(true);
+    });
+
+    it('rejects sequential calls even when they start close together', () => {
+        expect(callsOverlap(at('100', '120'), at('125', '140'))).toBe(false);
+    });
+
+    it('treats back-to-back calls as sequential', () => {
+        expect(callsOverlap(at('100', '200'), at('200', '300'))).toBe(false);
+    });
+
+    it('treats a call without an end time as still in flight', () => {
+        expect(callsOverlap(at('100'), at('500', '600'))).toBe(true);
+    });
+
+    it("treats Go's zero time as no end time", () => {
+        const pending = makeCall({ startTime: '2026-01-01T00:00:00.100Z', endTime: '0001-01-01T00:00:00Z' });
+        expect(callsOverlap(pending, at('500', '600'))).toBe(true);
     });
 });

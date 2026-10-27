@@ -23,3 +23,19 @@ export function formatTime(iso: string): string {
         return '';
     }
 }
+
+/**
+ * End time of a call in ms. Calls still in flight (no endTime, or Go's zero
+ * time) are treated as open-ended.
+ */
+function callEndMs(call: Call, startMs: number): number {
+    const end = call.endTime ? new Date(call.endTime).getTime() : NaN;
+    return Number.isNaN(end) || end < startMs ? Infinity : end;
+}
+
+/** True if the two calls were in flight at the same time. */
+export function callsOverlap(a: Call, b: Call): boolean {
+    const aStart = new Date(a.startTime).getTime();
+    const bStart = new Date(b.startTime).getTime();
+    return aStart < callEndMs(b, bStart) && bStart < callEndMs(a, aStart);
+}

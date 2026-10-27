@@ -1,15 +1,15 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Flow } from '@/types/flow';
+import React, { useEffect, useRef } from 'react';
+import { Flow, Call } from '@/types/flow';
 import { getStatusColor, getMethodBadgeClasses } from '@/utils/style';
-import { Terminal, ArrowRight } from 'lucide-react';
+import { Terminal, ArrowRight, Search } from 'lucide-react';
 
 interface LogPanelProps {
     flow: Flow | null;
+    onSelectCall?: (call: Call) => void;
 }
 
-export const LogPanel = ({ flow }: LogPanelProps) => {
+export const LogPanel = ({ flow, onSelectCall }: LogPanelProps) => {
     const endRef = useRef<HTMLDivElement>(null);
-    const [expandedId, setExpandedId] = useState<string | null>(null);
 
     const calls = flow ? [...flow.calls].sort((a, b) => a.order - b.order) : [];
 
@@ -52,8 +52,8 @@ export const LogPanel = ({ flow }: LogPanelProps) => {
                             {calls.map((call) => (
                                 <React.Fragment key={call.callId}>
                                     <tr
-                                        onClick={() => setExpandedId(expandedId === call.callId ? null : call.callId)}
-                                        className={`border-b border-slate-800/50 hover:bg-slate-900/50 transition-colors cursor-pointer ${expandedId === call.callId ? 'bg-blue-500/10' : ''}`}
+                                        onClick={() => onSelectCall?.(call)}
+                                        className="border-b border-slate-800/50 hover:bg-slate-900/50 transition-colors cursor-pointer"
                                     >
                                         <td className="py-2 pl-4 text-slate-600">{call.order + 1}</td>
                                         <td className="py-2">
@@ -76,35 +76,9 @@ export const LogPanel = ({ flow }: LogPanelProps) => {
                                             <span className="text-blue-400 font-semibold uppercase text-[10px] tracking-tight">{call.source}</span>
                                             <ArrowRight className="w-3 h-3 text-slate-600" />
                                             <span className="text-emerald-400 font-semibold uppercase text-[10px] tracking-tight">{call.destination}</span>
+                                            <Search className="w-3 h-3 text-slate-700 ml-1" />
                                         </td>
                                     </tr>
-                                    {expandedId === call.callId && (
-                                        <tr className="bg-slate-900/40">
-                                            <td colSpan={6} className="p-4 border-b border-blue-500/20 shadow-inner">
-                                                <div className="space-y-3">
-                                                    {call.requestHeaders && (
-                                                        <div>
-                                                            <p className="text-[10px] text-slate-500 uppercase font-bold mb-1 tracking-widest">Request Headers</p>
-                                                            <pre className="bg-slate-950 p-3 rounded-lg border border-slate-800 text-blue-300 overflow-x-auto whitespace-pre-wrap max-h-48 overflow-y-auto shadow-xl">
-                                                                {call.requestHeaders}
-                                                            </pre>
-                                                        </div>
-                                                    )}
-                                                    {call.requestBody && (
-                                                        <div>
-                                                            <p className="text-[10px] text-slate-500 uppercase font-bold mb-1 tracking-widest">Request Body</p>
-                                                            <pre className="bg-slate-950 p-3 rounded-lg border border-slate-800 text-blue-300 overflow-x-auto whitespace-pre-wrap max-h-48 overflow-y-auto shadow-xl">
-                                                                {call.requestBody}
-                                                            </pre>
-                                                        </div>
-                                                    )}
-                                                    {!call.requestBody && !call.requestHeaders && (
-                                                        <p className="text-slate-600 italic">No request details captured.</p>
-                                                    )}
-                                                </div>
-                                            </td>
-                                        </tr>
-                                    )}
                                 </React.Fragment>
                             ))}
                             <div ref={endRef} />

@@ -7,8 +7,10 @@ import { LiveFeed } from '@/components/LiveFeed';
 import { SequenceView } from '@/components/SequenceView';
 import { LogPanel } from '@/components/LogPanel';
 import { FlowSelector } from '@/components/FlowSelector';
+import { RequestInspector } from '@/components/RequestInspector';
 import { SettingsModal } from './SettingsModal';
 import { Settings, LayoutGrid, ListTree, Activity } from 'lucide-react';
+import { Call } from '@/types/flow';
 
 function getWebSocketUrl(): string {
     if (typeof window === 'undefined') return 'ws://localhost:3005/ws';
@@ -28,6 +30,7 @@ export default function Dashboard() {
     } = useWebSocket(getWebSocketUrl());
     const [view, setView] = useState<'flow' | 'sequence'>('flow');
     const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+    const [inspectedCall, setInspectedCall] = useState<Call | null>(null);
 
     return (
         <div className="flex flex-col h-screen bg-slate-900 font-sans selection:bg-blue-500/30">
@@ -91,7 +94,7 @@ export default function Dashboard() {
                 <FlowSelector
                     flows={flows}
                     selectedFlowId={selectedFlowId}
-                    onSelectFlow={selectFlow}
+                    onSelectFlow={(id) => { selectFlow(id); setInspectedCall(null); }}
                     autoFollow={autoFollow}
                     onToggleAutoFollow={toggleAutoFollow}
                 />
@@ -106,9 +109,13 @@ export default function Dashboard() {
                         )}
                     </div>
 
-                    {/* Bottom Log Panel */}
+                    {/* Bottom Panel: Inspector (if call selected) or LogPanel */}
                     <div className="h-72">
-                        <LogPanel flow={selectedFlow} />
+                        {inspectedCall ? (
+                            <RequestInspector call={inspectedCall} onClose={() => setInspectedCall(null)} />
+                        ) : (
+                            <LogPanel flow={selectedFlow} onSelectCall={setInspectedCall} />
+                        )}
                     </div>
                 </div>
 

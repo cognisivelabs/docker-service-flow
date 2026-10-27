@@ -5,10 +5,13 @@ A zero-config service flow visualizer for Docker microservices. Sniffs traffic d
 ## Quick Start
 
 ```bash
+git clone https://github.com/cognisivelabs/react-sequence-kit.git
 git clone https://github.com/cognisivelabs/docker-service-flow.git
 cd docker-service-flow
-docker compose up -d --build
+make up
 ```
+
+The frontend depends on [react-sequence-kit](https://github.com/cognisivelabs/react-sequence-kit), which must be checked out next to this repo. `make up` builds the frontend on the host, then builds and starts the containers.
 
 Open **http://localhost:3005**. That's it.
 
@@ -18,13 +21,13 @@ Works on Mac, Linux, and Windows — anywhere Docker runs.
 
 ```bash
 # Start
-docker compose up -d --build
+make up
 
 # Stop
-docker compose down
+make down
 
 # Specify a Docker bridge interface manually
-INTERFACE=br-abc123 docker compose up -d --build
+INTERFACE=br-abc123 make up
 ```
 
 If `INTERFACE` is not set, the sniffer auto-detects the Docker bridge network with the most active containers.
@@ -36,7 +39,9 @@ If `INTERFACE` is not set, the sniffer auto-detects the Docker bridge network wi
 - **Flow Correlation** — groups related calls (A→B→C→D) into a single flow using temporal heuristics
 - **Flow Selector** — browse and inspect individual flows, with auto-follow for live debugging
 - **Deep Packet Inspection** — HTTP method, path, headers, body, status codes, latency
-- **Execution Logs** — ordered call table per flow with expandable request details
+- **Execution Logs** — ordered call table per flow; click a call to open the Request Inspector
+- **Request Inspector** — request/response headers and bodies (JSON pretty-printed), copy-as-curl
+- **UML Fragments** — sequence diagrams mark repeated calls (loop), concurrent calls (par) and error responses (alt)
 - **Zero Config** — auto-detects Docker networks and bridge interfaces
 
 ## Dashboard
@@ -91,14 +96,17 @@ The `docker-compose.yml` runs both from the same image.
 
 ## Prerequisites
 
-- **Docker & Docker Compose** — that's all
+- **Docker & Docker Compose**
+- **Node.js 20+** — to build the frontend
+- **react-sequence-kit** checked out as a sibling directory (`../react-sequence-kit`)
 
 ## Development
 
 ```bash
 make build      # Build Go binary locally (needs Go 1.24+ and Node.js 20+)
 make test       # Run all tests (Go + frontend)
-make up         # docker compose up -d --build
+make frontend   # Build the static frontend into web/out
+make up         # Build frontend, then docker compose up -d --build
 make down       # docker compose down
 make clean      # Clean build artifacts
 ```
@@ -117,8 +125,7 @@ docker-service-flow/
 ├── web/                         # Next.js frontend
 │   ├── src/components/          # Dashboard, FlowCanvas, SequenceView, etc.
 │   ├── src/hooks/               # WebSocket hook
-│   ├── src/utils/               # Shared utilities + tests
-│   └── src/lib/react-sequence-kit/  # Custom sequence diagram renderer
+│   └── src/utils/               # Shared utilities + tests
 ├── Dockerfile                   # Single image for both server + sniffer
 ├── docker-compose.yml           # Orchestrates server + sniffer
 └── Makefile
@@ -127,5 +134,5 @@ docker-service-flow/
 ## Tech Stack
 
 - **Backend**: Go, gopacket (libpcap), gorilla/websocket
-- **Frontend**: Next.js, React Flow, dagre (auto-layout), Tailwind CSS
+- **Frontend**: Next.js, React Flow, dagre (auto-layout), react-sequence-kit, Tailwind CSS
 - **Deployment**: Single Docker image, orchestrated via Docker Compose

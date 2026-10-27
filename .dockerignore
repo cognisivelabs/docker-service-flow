@@ -1,0 +1,5 @@
+.git
+bin/
+web/node_modules/
+web/.next/
+# web/out is required: it is built on the host by `make frontend`

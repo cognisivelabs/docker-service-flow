@@ -1,7 +1,7 @@
-.PHONY: up down build test clean
+.PHONY: up down build frontend test clean
 
-# Start docker-service-flow (builds image + runs)
-up:
+# Start docker-service-flow (builds frontend, then image + runs)
+up: frontend
 	docker compose up -d --build
 
 # Stop docker-service-flow
