@@ -37,6 +37,7 @@ type Sniffer struct {
 	mu             sync.Mutex
 	activeRequests map[string]pendingRequest
 	partials       map[string]*partialMessage
+	streams        map[string]streamState
 }
 
 type TrafficEvent struct {
@@ -62,6 +63,13 @@ type pendingRequest struct {
 	startTime time.Time
 }
 
+// streamState tracks how far into one direction of a TCP connection we've seen,
+// so retransmitted segments aren't processed twice.
+type streamState struct {
+	next     uint32 // sequence number just past the last byte seen
+	lastSeen time.Time
+}
+
 // partialMessage is an HTTP message whose body spans more TCP segments than
 // we've seen so far. It is emitted once complete, capped or stale.
 type partialMessage struct {
@@ -84,6 +92,7 @@ func NewSniffer(device string, resolver ServiceResolver, output OutputChannel) *
 		output:         output,
 		activeRequests: make(map[string]pendingRequest),
 		partials:       make(map[string]*partialMessage),
+		streams:        make(map[string]streamState),
 	}
 }
 
@@ -120,6 +129,11 @@ func (s *Sniffer) cleanupStaleRequests() {
 		for key, req := range s.activeRequests {
 			if now.Sub(req.startTime) > 30*time.Second {
 				delete(s.activeRequests, key)
+			}
+		}
+		for key, st := range s.streams {
+			if now.Sub(st.lastSeen) > 30*time.Second {
+				delete(s.streams, key)
 			}
 		}
 		s.mu.Unlock()
@@ -175,6 +189,15 @@ func (s *Sniffer) processPacket(packet gopacket.Packet) {
 		return
 	}
 	tcp, _ := tcpLayer.(*layers.TCP)
+	reqKey := srcIP + ":" + tcp.SrcPort.String() + "-" + dstIP + ":" + tcp.DstPort.String()
+	respKey := dstIP + ":" + tcp.DstPort.String() + "-" + srcIP + ":" + tcp.SrcPort.String()
+
+	// A new or closing connection invalidates sequence tracking for these ports,
+	// which may be reused by a later connection with a different sequence space.
+	if tcp.SYN || tcp.FIN || tcp.RST {
+		s.resetStream(reqKey)
+	}
+
 	payload := tcp.Payload
 	if len(payload) == 0 {
 		return
@@ -188,8 +211,9 @@ func (s *Sniffer) processPacket(packet gopacket.Packet) {
 
 	parts := strings.Split(lines[0], " ")
 
-	reqKey := srcIP + ":" + tcp.SrcPort.String() + "-" + dstIP + ":" + tcp.DstPort.String()
-	respKey := dstIP + ":" + tcp.DstPort.String() + "-" + srcIP + ":" + tcp.SrcPort.String()
+	if s.isRetransmission(reqKey, tcp.Seq, len(payload)) {
+		return
+	}
 
 	isRequest := len(parts) >= 2 && isHTTPMethod(parts[0])
 	isResponse := len(parts) >= 2 && strings.HasPrefix(parts[0], "HTTP/")
@@ -267,6 +291,38 @@ func (s *Sniffer) processPacket(packet gopacket.Packet) {
 			s.bufferOrEmit(reqKey, event, payloadStr)
 		}
 	}
+}
+
+// isRetransmission reports whether every byte of this segment was already seen on
+// this direction of the connection (a TCP retransmission), and records it otherwise.
+// Segments arriving out of order behind a later one are also treated as seen, which
+// is an acceptable loss on a local bridge where reordering is rare.
+func (s *Sniffer) isRetransmission(key string, seq uint32, length int) bool {
+	end := seq + uint32(length)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	st, ok := s.streams[key]
+	if ok && seqAtOrBefore(end, st.next) {
+		return true
+	}
+	if !ok || seqAtOrBefore(st.next, end) {
+		st.next = end
+	}
+	st.lastSeen = time.Now()
+	s.streams[key] = st
+	return false
+}
+
+// resetStream forgets sequence tracking for one direction of a connection.
+func (s *Sniffer) resetStream(key string) {
+	s.mu.Lock()
+	delete(s.streams, key)
+	s.mu.Unlock()
+}
+
+// seqAtOrBefore compares TCP sequence numbers, allowing for wraparound.
+func seqAtOrBefore(a, b uint32) bool {
+	return int32(a-b) <= 0
 }
 
 // bufferOrEmit emits the message now if its body is complete, otherwise holds
