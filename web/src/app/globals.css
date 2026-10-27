@@ -1,4 +1,6 @@
 @import "tailwindcss";
+/* web/out is committed, so keep Tailwind from scanning its own previous output */
+@source not "../../out";
 
 :root {
   --background: #ffffff;

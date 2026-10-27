@@ -1,0 +1,4 @@
+:HL["./_next/static/chunks/692bc345c0471e9d.css","style"]
+:HL["./_next/static/media/GeistMono_Variable-s.p.97c687d1.woff2","font",{"crossOrigin":"","type":"font/woff2"}]
+:HL["./_next/static/media/Geist_Variable-s.p.0b15c81f.woff2","font",{"crossOrigin":"","type":"font/woff2"}]
+0:{"buildId":"dsf","tree":{"name":"","paramType":null,"paramKey":"","hasRuntimePrefetch":false,"slots":{"children":{"name":"__PAGE__","paramType":null,"paramKey":"__PAGE__","hasRuntimePrefetch":false,"slots":null,"isRootLayout":false}},"isRootLayout":true},"staleTime":300}

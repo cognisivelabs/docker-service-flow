@@ -3,6 +3,7 @@ x-build: &build
   context: .
   args:
     BASE_REGISTRY: ${BASE_REGISTRY:-}
+    FRONTEND: ${FRONTEND:-prebuilt}
     NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmjs.org/}
     GOPROXY: ${GOPROXY:-https://proxy.golang.org,direct}
     GOSUMDB: ${GOSUMDB:-sum.golang.org}
