@@ -2,6 +2,7 @@ package correlator
 
 import (
 	"encoding/json"
+	"fmt"
 	"testing"
 	"time"
 )
@@ -152,8 +153,9 @@ func TestNoCausalChainAfterWindow(t *testing.T) {
 	b := &mockBroadcaster{}
 	e := newTestEngine(b)
 
-	// A → B
+	// A → B, answered
 	e.HandleEvent(makeRequestEvent("gateway", "orders", "GET", "/api/checkout", "10.0.0.1", "50000", "10.0.0.2", "8080"))
+	e.HandleEvent(makeResponseEvent("10.0.0.2", "8080", "10.0.0.1", "50000", "200", 5))
 
 	// Wait past causal window (50ms in test config)
 	time.Sleep(80 * time.Millisecond)
@@ -164,6 +166,143 @@ func TestNoCausalChainAfterWindow(t *testing.T) {
 	flows := e.GetAllFlows()
 	if len(flows) != 2 {
 		t.Fatalf("expected 2 separate flows after window expiry, got %d", len(flows))
+	}
+}
+
+func TestInFlightParentBeyondCausalWindow(t *testing.T) {
+	b := &mockBroadcaster{}
+	e := newTestEngine(b)
+
+	// A → B, still unanswered
+	e.HandleEvent(makeRequestEvent("gateway", "orders", "GET", "/api/checkout", "10.0.0.1", "50000", "10.0.0.2", "8080"))
+
+	// B is still serving the request, so its call belongs to the same flow even
+	// after the causal window (50ms) has passed.
+	time.Sleep(80 * time.Millisecond)
+	e.HandleEvent(makeRequestEvent("orders", "inventory", "GET", "/api/check", "10.0.0.2", "50001", "10.0.0.3", "8080"))
+
+	flows := e.GetAllFlows()
+	if len(flows) != 1 || len(flows[0].Calls) != 2 {
+		t.Fatalf("expected 1 flow with 2 calls, got %d flows", len(flows))
+	}
+}
+
+func TestConcurrentRequestsGetSeparateFlows(t *testing.T) {
+	b := &mockBroadcaster{}
+	e := newTestEngine(b)
+
+	// Three clients hit the gateway at once; all three requests are in flight.
+	for _, port := range []string{"50000", "50001", "50002"} {
+		e.HandleEvent(makeRequestEvent("client", "gateway", "POST", "/api/orders", "10.0.0.1", port, "10.0.0.2", "8000"))
+	}
+
+	// Each gateway handler makes three sequential downstream calls: its first calls
+	// go out together, then each handler makes its next call as soon as the
+	// previous one returns, interleaved with the other handlers.
+	port := 60000
+	inflight := make([]string, 3)
+	for h := 0; h < 3; h++ {
+		inflight[h] = fmt.Sprint(port)
+		e.HandleEvent(makeRequestEvent("gateway", "inventory", "GET", "/items", "10.0.0.2", inflight[h], "10.0.0.3", "8000"))
+		port++
+	}
+	for round := 0; round < 2; round++ {
+		for h := 0; h < 3; h++ {
+			e.HandleEvent(makeResponseEvent("10.0.0.3", "8000", "10.0.0.2", inflight[h], "200", 1))
+			inflight[h] = fmt.Sprint(port)
+			e.HandleEvent(makeRequestEvent("gateway", "inventory", "GET", "/items", "10.0.0.2", inflight[h], "10.0.0.3", "8000"))
+			port++
+		}
+	}
+
+	flows := e.GetAllFlows()
+	if len(flows) != 3 {
+		t.Fatalf("expected 3 flows, got %d", len(flows))
+	}
+	for _, f := range flows {
+		if len(f.Calls) != 4 {
+			t.Errorf("flow %s has %d calls, want 4 (1 inbound + 3 downstream)", f.FlowID, len(f.Calls))
+		}
+		if f.Calls[0].Source != "client" {
+			t.Errorf("flow %s root is %s->%s, want client->gateway", f.FlowID, f.Calls[0].Source, f.Calls[0].Destination)
+		}
+	}
+}
+
+func TestAnsweredRequestStopsCollectingCalls(t *testing.T) {
+	b := &mockBroadcaster{}
+	e := newTestEngine(b)
+
+	e.HandleEvent(makeRequestEvent("client", "gateway", "GET", "/a", "10.0.0.1", "50000", "10.0.0.2", "8000"))
+	e.HandleEvent(makeRequestEvent("client", "gateway", "GET", "/b", "10.0.0.1", "50001", "10.0.0.2", "8000"))
+	// First request is answered; only the second is still being served.
+	e.HandleEvent(makeResponseEvent("10.0.0.2", "8000", "10.0.0.1", "50000", "200", 1))
+	time.Sleep(80 * time.Millisecond) // past the causal window
+
+	e.HandleEvent(makeRequestEvent("gateway", "inventory", "GET", "/items", "10.0.0.2", "60000", "10.0.0.3", "8000"))
+
+	for _, f := range e.GetAllFlows() {
+		if f.Calls[0].Path == "/b" && len(f.Calls) != 2 {
+			t.Errorf("downstream call should join the in-flight /b request")
+		}
+		if f.Calls[0].Path == "/a" && len(f.Calls) != 1 {
+			t.Errorf("answered /a request should not collect more calls")
+		}
+	}
+}
+
+func TestTraceHeaderLinksFlows(t *testing.T) {
+	b := &mockBroadcaster{}
+	e := newTestEngine(b)
+
+	withTrace := func(data []byte, traceID string) []byte {
+		var ev RawEvent
+		json.Unmarshal(data, &ev)
+		ev.RequestHeaders = "Host: x\r\ntraceparent: 00-" + traceID + "-00f067aa0ba902b7-01"
+		out, _ := json.Marshal(ev)
+		return out
+	}
+	t1 := "4bf92f3577b34da6a3ce929d0e0e4736"
+	t2 := "a1b2c3d4e5f60718293a4b5c6d7e8f90"
+
+	e.HandleEvent(withTrace(makeRequestEvent("client", "gateway", "GET", "/one", "10.0.0.1", "50000", "10.0.0.2", "8000"), t1))
+	e.HandleEvent(withTrace(makeRequestEvent("client", "gateway", "GET", "/two", "10.0.0.1", "50001", "10.0.0.2", "8000"), t2))
+	// The in-flight heuristic would pick /one (oldest); the trace header says /two.
+	e.HandleEvent(withTrace(makeRequestEvent("gateway", "inventory", "GET", "/items", "10.0.0.2", "60000", "10.0.0.3", "8000"), t2))
+
+	for _, f := range e.GetAllFlows() {
+		want := map[string]int{"/one": 1, "/two": 2}[f.Calls[0].Path]
+		if len(f.Calls) != want {
+			t.Errorf("flow rooted at %s has %d calls, want %d", f.Calls[0].Path, len(f.Calls), want)
+		}
+	}
+}
+
+func TestTraceIDFromHeaders(t *testing.T) {
+	tests := map[string]string{
+		"traceparent: 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01": "4bf92f3577b34da6a3ce929d0e0e4736",
+		"X-B3-TraceId: 80f198ee56343ba8":                                       "80f198ee56343ba8",
+		"Host: a\r\nX-Request-ID: req-42":                                      "req-42",
+		"x-correlation-id: corr-7":                                             "corr-7",
+		"traceparent: garbage\r\nX-Request-ID: req-1":                          "req-1",
+		"Host: a\r\nAccept: */*":                                               "",
+	}
+	for headers, want := range tests {
+		if got := traceIDFromHeaders(headers); got != want {
+			t.Errorf("traceIDFromHeaders(%q) = %q, want %q", headers, got, want)
+		}
+	}
+}
+
+func TestSelfCallDoesNotParentItself(t *testing.T) {
+	b := &mockBroadcaster{}
+	e := newTestEngine(b)
+
+	e.HandleEvent(makeRequestEvent("worker", "worker", "GET", "/tick", "10.0.0.5", "50000", "10.0.0.5", "8000"))
+
+	flows := e.GetAllFlows()
+	if len(flows) != 1 || len(flows[0].Calls) != 1 {
+		t.Fatalf("expected a single 1-call flow, got %d flows", len(flows))
 	}
 }
 
@@ -243,5 +382,27 @@ func TestStaleRequestTTLCleanup(t *testing.T) {
 	e.mu.Unlock()
 	if pendingCount != 0 {
 		t.Errorf("expected 0 pending calls after TTL cleanup, got %d", pendingCount)
+	}
+}
+
+func TestLateResponseAfterSettlingIsPublished(t *testing.T) {
+	b := &mockBroadcaster{}
+	// Settles after 100ms; pending requests live 5s (as in production, well past settling).
+	e := NewEngineWithConfig(b, 50*time.Millisecond, 100*time.Millisecond, 5*time.Second)
+
+	e.HandleEvent(makeRequestEvent("gateway", "stock", "GET", "/stock", "10.0.0.1", "50000", "10.0.0.2", "8000"))
+	time.Sleep(700 * time.Millisecond) // settle (100ms) + maintenance tick (500ms)
+	b.reset()
+
+	e.HandleEvent(makeResponseEvent("10.0.0.2", "8000", "10.0.0.1", "50000", "200", 3))
+
+	msg := b.lastMessage()
+	if msg == nil || msg.Type != "flow_complete" {
+		t.Fatalf("expected a flow_complete broadcast for the late response, got %+v", msg)
+	}
+	var flow Flow
+	json.Unmarshal(msg.Payload, &flow)
+	if flow.Calls[0].Status != "200" {
+		t.Errorf("published call status = %q, want 200", flow.Calls[0].Status)
 	}
 }

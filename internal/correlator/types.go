@@ -27,6 +27,11 @@ type Call struct {
 	SrcPort string `json:"-"`
 	DstIP   string `json:"-"`
 	DstPort string `json:"-"`
+
+	// Internal fields for flow correlation
+	seq      int    // creation order, for deterministic tie-breaking
+	traceID  string // propagated trace/request ID from headers, if any
+	children int    // calls attributed to this call as their parent
 }
 
 type Flow struct {

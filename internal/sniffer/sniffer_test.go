@@ -197,3 +197,39 @@ func TestParseHTTPMessageDecompresses(t *testing.T) {
 		})
 	}
 }
+
+func TestIsRetransmission(t *testing.T) {
+	s, _ := newTestSniffer()
+	steps := []struct {
+		name   string
+		key    string
+		seq    uint32
+		length int
+		want   bool
+	}{
+		{"first segment", "a", 1000, 100, false},
+		{"exact retransmission", "a", 1000, 100, true},
+		{"next segment", "a", 1100, 50, false},
+		{"retransmission of earlier segment", "a", 1000, 100, true},
+		{"overlap carrying new bytes", "a", 1120, 60, false},
+		{"other direction is independent", "b", 1000, 100, false},
+		{"near wraparound", "c", 0xFFFFFFF0, 0x20, false},
+		{"after wraparound", "c", 0x10, 0x10, false},
+		{"retransmission across wraparound", "c", 0xFFFFFFF0, 0x20, true},
+	}
+	for _, st := range steps {
+		if got := s.isRetransmission(st.key, st.seq, st.length); got != st.want {
+			t.Errorf("%s: isRetransmission = %v, want %v", st.name, got, st.want)
+		}
+	}
+}
+
+func TestResetStreamAllowsPortReuse(t *testing.T) {
+	s, _ := newTestSniffer()
+	s.isRetransmission("a", 5000, 100)
+	// A new connection on the same ports starts from an unrelated sequence number.
+	s.resetStream("a")
+	if s.isRetransmission("a", 1000, 100) {
+		t.Error("first segment of a reused connection was treated as a retransmission")
+	}
+}

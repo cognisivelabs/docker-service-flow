@@ -3,7 +3,7 @@
 import React, { useMemo } from 'react';
 import { Flow, Call } from '@/types/flow';
 import { callsOverlap } from '@/utils/flow';
-import { SequenceDiagram, type Actor, type Message, type Fragment, DEFAULT_THEME } from 'react-sequence-kit';
+import { SequenceDiagram, type Actor, type Message, type Fragment, DEFAULT_THEME } from '@/lib/react-sequence-kit';
 
 interface SequenceViewProps {
     flow: Flow | null;

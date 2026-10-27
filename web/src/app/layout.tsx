@@ -1,16 +1,18 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import localFont from "next/font/local";
 import "./globals.css";
 
-
-const geistSans = Geist({
+// Fonts are bundled (not next/font/google) so builds need no access to Google Fonts.
+const geistSans = localFont({
+  src: "./fonts/Geist-Variable.woff2",
   variable: "--font-geist-sans",
-  subsets: ["latin"],
+  weight: "100 900",
 });
 
-const geistMono = Geist_Mono({
+const geistMono = localFont({
+  src: "./fonts/GeistMono-Variable.woff2",
   variable: "--font-geist-mono",
-  subsets: ["latin"],
+  weight: "100 900",
 });
 
 export const metadata: Metadata = {

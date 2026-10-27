@@ -1,6 +1,16 @@
+# Build args default to public sources; set them (e.g. in .env) to build via a mirror such as Nexus.
+x-build: &build
+  context: .
+  args:
+    BASE_REGISTRY: ${BASE_REGISTRY:-}
+    NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmjs.org/}
+    GOPROXY: ${GOPROXY:-https://proxy.golang.org,direct}
+    GOSUMDB: ${GOSUMDB:-sum.golang.org}
+    ALPINE_MIRROR: ${ALPINE_MIRROR:-}
+
 services:
   server:
-    build: .
+    build: *build
     command: ["--mode", "server", "--port", "3005"]
     ports:
       - "3005:3005"
@@ -8,7 +18,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
 
   sniffer:
-    build: .
+    build: *build
     command: ["--mode", "sniffer", "--server-url", "http://127.0.0.1:3005/api/events"]
     network_mode: host
     cap_add:
