@@ -2,14 +2,13 @@
 
 import React, { useState } from 'react';
 import { useWebSocket } from '@/hooks/useWebSocket';
-import { FlowCanvas } from '@/components/FlowCanvas';
 import { LiveFeed } from '@/components/LiveFeed';
 import { SequenceView } from '@/components/SequenceView';
 import { LogPanel } from '@/components/LogPanel';
 import { FlowSelector } from '@/components/FlowSelector';
 import { RequestInspector } from '@/components/RequestInspector';
 import { SettingsModal } from './SettingsModal';
-import { Settings, LayoutGrid, ListTree, Activity } from 'lucide-react';
+import { Settings, Activity } from 'lucide-react';
 import { Call } from '@/types/flow';
 
 function getWebSocketUrl(): string {
@@ -28,7 +27,6 @@ export default function Dashboard() {
         toggleAutoFollow,
         isConnected,
     } = useWebSocket(getWebSocketUrl());
-    const [view, setView] = useState<'flow' | 'sequence'>('flow');
     const [isSettingsOpen, setIsSettingsOpen] = useState(false);
     const [inspectedCall, setInspectedCall] = useState<Call | null>(null);
 
@@ -49,23 +47,6 @@ export default function Dashboard() {
                             </span>
                         </div>
                     </div>
-                </div>
-
-                <div className="flex items-center gap-2 bg-slate-800/50 p-1 rounded-xl border border-slate-700/50">
-                    <button
-                        onClick={() => setView('flow')}
-                        className={`flex items-center gap-2 px-4 py-1.5 rounded-lg text-sm font-medium transition-all ${view === 'flow' ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/20' : 'text-slate-400 hover:text-white'}`}
-                    >
-                        <LayoutGrid className="w-4 h-4" />
-                        Graph View
-                    </button>
-                    <button
-                        onClick={() => setView('sequence')}
-                        className={`flex items-center gap-2 px-4 py-1.5 rounded-lg text-sm font-medium transition-all ${view === 'sequence' ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/20' : 'text-slate-400 hover:text-white'}`}
-                    >
-                        <ListTree className="w-4 h-4" />
-                        Sequence View
-                    </button>
                 </div>
 
                 <div className="flex items-center gap-4">
@@ -102,11 +83,7 @@ export default function Dashboard() {
                 {/* Visualization area */}
                 <div className="flex-1 flex flex-col relative min-w-0">
                     <div className="flex-1 relative border-b border-slate-800">
-                        {view === 'flow' ? (
-                            <FlowCanvas flows={flows} selectedFlow={selectedFlow} />
-                        ) : (
-                            <SequenceView flow={selectedFlow} />
-                        )}
+                        <SequenceView flow={selectedFlow} />
                     </div>
 
                     {/* Bottom Panel: Inspector (if call selected) or LogPanel */}

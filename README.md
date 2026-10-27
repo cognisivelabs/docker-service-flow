@@ -1,6 +1,6 @@
 # docker-service-flow
 
-A zero-config service flow visualizer for Docker microservices. Sniffs traffic directly from Docker bridge interfaces to build live service maps and sequence diagrams — no SDKs, no sidecars, no code changes.
+A zero-config service flow visualizer for Docker microservices. Sniffs traffic directly from Docker bridge interfaces to build live sequence diagrams — no SDKs, no sidecars, no code changes.
 
 ## Quick Start
 
@@ -31,7 +31,6 @@ If `INTERFACE` is not set, the sniffer auto-detects the Docker bridge network wi
 
 ## Features
 
-- **Live Service Map** — auto-discovered containers with left-to-right directed graph layout (dagre)
 - **Sequence Diagrams** — full request chain visualization with request and reply arrows per flow
 - **Flow Correlation** — groups related calls (A→B→C→D) into a single flow using temporal heuristics
 - **Flow Selector** — browse and inspect individual flows, with auto-follow for live debugging
@@ -48,7 +47,7 @@ The dashboard at `http://localhost:3005` has four panels:
 | Panel | Location | What it shows |
 |-------|----------|---------------|
 | **Flow Selector** | Left sidebar | List of captured flows, click to inspect |
-| **Graph / Sequence View** | Center top | Service topology graph or UML sequence diagram (toggle) |
+| **Sequence View** | Center top | UML sequence diagram of the selected flow |
 | **Execution Logs** | Center bottom | Ordered call table for the selected flow |
 | **Live Feed** | Right sidebar | Real-time flow summaries |
 
@@ -149,7 +148,7 @@ docker-service-flow/
 │   ├── sniffer/                 # Packet capture + event forwarding
 │   └── server/                  # WebSocket hub + HTTP mux
 ├── web/                         # Next.js frontend
-│   ├── src/components/          # Dashboard, FlowCanvas, SequenceView, etc.
+│   ├── src/components/          # Dashboard, SequenceView, RequestInspector, etc.
 │   ├── src/hooks/               # WebSocket hook
 │   ├── src/utils/               # Shared utilities + tests
 │   └── src/lib/react-sequence-kit/  # Vendored sequence diagram renderer
@@ -161,5 +160,5 @@ docker-service-flow/
 ## Tech Stack
 
 - **Backend**: Go, gopacket (libpcap), gorilla/websocket
-- **Frontend**: Next.js, React Flow, dagre (auto-layout), react-sequence-kit (vendored), Tailwind CSS
+- **Frontend**: Next.js, react-sequence-kit (vendored), Tailwind CSS
 - **Deployment**: Single Docker image, orchestrated via Docker Compose

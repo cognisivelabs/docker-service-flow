@@ -1,7 +1,8 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Flow, WSMessage } from '@/types/flow';
+import { Flow } from '@/types/flow';
+import { parseWSFrame } from '@/utils/ws';
 
 export const useWebSocket = (url: string) => {
   const [flows, setFlows] = useState<Map<string, Flow>>(new Map());
@@ -23,9 +24,7 @@ export const useWebSocket = (url: string) => {
       };
 
       socket.onmessage = (event) => {
-        try {
-          const msg: WSMessage = JSON.parse(event.data);
-
+        for (const msg of parseWSFrame(event.data)) {
           switch (msg.type) {
             case 'flow_list': {
               setFlows(prev => {
@@ -49,8 +48,6 @@ export const useWebSocket = (url: string) => {
               break;
             }
           }
-        } catch (err) {
-          console.error('Error parsing WS message:', err);
         }
       };
 
