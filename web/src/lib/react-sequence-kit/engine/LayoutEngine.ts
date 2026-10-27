@@ -207,7 +207,7 @@ export class LayoutEngine {
             }
 
             // Push final results
-            renderedFragments.push(...tempFragments.map(({ startIndex, endIndex, ...rest }) => rest));
+            renderedFragments.push(...tempFragments.map(({ data, x, y, width, height }) => ({ data, x, y, width, height })));
         }
 
         const totalHeight = currentY + this.config.messageHeight;

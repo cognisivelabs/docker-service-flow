@@ -164,7 +164,7 @@ export const SequenceDiagram: React.FC<SequenceDiagramProps> = ({
                                 onSelect?.({ id: frag.data.id, type: 'fragment' });
                                 onFragmentClick?.(frag.data);
                             }}
-                            onHover={(ctx: any) => handleHover(ctx ? { ...ctx, type: 'fragment', data: frag.data } : null)}
+                            onHover={(ctx) => handleHover(ctx ? { ...ctx, type: 'fragment', data: frag.data } : null)}
                         />
                     ))}
 

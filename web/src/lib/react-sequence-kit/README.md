@@ -8,5 +8,9 @@ mirror (the library is not published to npm).
 Only the library is included (`engine/`, `react/`, `index.ts`); the demo app
 and its global stylesheet are left out. Its only runtime dependency is React.
 
+Local changes since the copy: removed the unused `useDiagramController` hook,
+replaced `any` types with `TooltipContext` / `unknown`, and simplified one
+destructuring in `LayoutEngine` (all lint fixes, no behaviour change).
+
 To update, copy `src/engine`, `src/react` and `src/index.ts` from the upstream
 repo (dropping the `./index.css` import) and record the new commit here.

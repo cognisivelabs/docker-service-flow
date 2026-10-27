@@ -1,12 +1,13 @@
 import React from 'react';
 import type { RenderedMessage } from '../engine/engine.types';
 import type { SequenceTheme } from './theme';
+import type { TooltipContext } from './SequenceDiagram';
 
 interface MessageArrowProps {
     renderedMessage: RenderedMessage;
     isSelected?: boolean;
     onClick?: (e: React.MouseEvent) => void;
-    onHover?: (ctx: any | null) => void;
+    onHover?: (ctx: TooltipContext | null) => void;
     theme: SequenceTheme;
 }
 

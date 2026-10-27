@@ -1,12 +1,13 @@
 import React from 'react';
 import type { RenderedFragment } from '../engine/engine.types';
 import type { SequenceTheme } from './theme';
+import type { TooltipContext } from './SequenceDiagram';
 
 interface FragmentRendererProps {
     renderedFragment: RenderedFragment;
     theme: SequenceTheme;
     onClick?: (e: React.MouseEvent) => void;
-    onHover?: (ctx: any | null) => void;
+    onHover?: (ctx: TooltipContext | null) => void;
 }
 
 export const FragmentRenderer: React.FC<FragmentRendererProps> = ({ renderedFragment, theme, onClick, onHover }) => {

@@ -1,12 +1,13 @@
 import React from 'react';
 import type { RenderedActor } from '../engine/engine.types';
 import type { SequenceTheme } from './theme';
+import type { TooltipContext } from './SequenceDiagram';
 
 interface LifelineProps {
     renderedActor: RenderedActor;
     isSelected?: boolean;
     onClick?: (e: React.MouseEvent) => void;
-    onHover?: (ctx: any | null) => void;
+    onHover?: (ctx: TooltipContext | null) => void;
     theme: SequenceTheme;
 }
 

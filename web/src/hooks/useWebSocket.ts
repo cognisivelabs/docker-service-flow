@@ -11,7 +11,10 @@ export const useWebSocket = (url: string) => {
   const [isConnected, setIsConnected] = useState(false);
   const socketRef = useRef<WebSocket | null>(null);
   const autoFollowRef = useRef(autoFollow);
-  autoFollowRef.current = autoFollow;
+
+  useEffect(() => {
+    autoFollowRef.current = autoFollow;
+  }, [autoFollow]);
 
   useEffect(() => {
     const connect = () => {
