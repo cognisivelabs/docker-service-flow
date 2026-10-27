@@ -1,4 +1,4 @@
-.PHONY: up down build frontend frontend-check test clean
+.PHONY: up down build frontend frontend-check vendor test clean
 
 # No outbound calls beyond the configured package registries
 export NEXT_TELEMETRY_DISABLED := 1
@@ -30,6 +30,12 @@ frontend:
 frontend-check: frontend
 	@git diff --quiet --exit-code -- web/out && test -z "$$(git ls-files --others --exclude-standard web/out)" \
 		|| (echo "web/out is out of date: run 'make frontend' and commit web/out" && exit 1)
+
+# Refresh the committed Go modules (vendor/) after changing go.mod; commit the
+# result. Go refuses to build if vendor/ doesn't match go.mod.
+vendor:
+	go mod tidy
+	go mod vendor
 
 # Run all tests
 test:
