@@ -29,8 +29,8 @@ export const SettingsModal = ({ isOpen, onClose }: SettingsModalProps) => {
                         <h3 className="text-sm font-semibold text-slate-300 mb-2">docker-service-flow</h3>
                         <p className="text-xs text-slate-500 leading-relaxed">
                             Zero-config service flow visualizer for Docker microservices.
-                            Sniffs traffic on Docker bridge interfaces to build live service maps
-                            and sequence diagrams.
+                            Sniffs traffic on Docker bridge interfaces to build live sequence
+                            diagrams.
                         </p>
                     </div>
 
