@@ -2,6 +2,7 @@ export function getStatusColor(status: string): string {
     if (status.startsWith('2')) return 'text-emerald-500';
     if (status === 'pending') return 'text-amber-500 animate-pulse';
     if (status === 'timeout') return 'text-red-400';
+    if (status.startsWith('3')) return 'text-sky-400';
     if (status.startsWith('4') || status.startsWith('5')) return 'text-red-400';
     return 'text-slate-400';
 }

@@ -33,6 +33,9 @@ func (s *DiscoveryService) Start() {
 	s.listenForEvents()
 }
 
+// HostName labels traffic from the Docker host (a network's gateway address).
+const HostName = "host"
+
 func (s *DiscoveryService) GetServiceName(ip string) string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -82,6 +85,13 @@ func (s *DiscoveryService) updateIPMap(containerID string) {
 			if ipStr != "" && ipStr != "invalid IP" {
 				s.ipMap[ipStr] = name
 				log.Printf("Mapped %s -> %s", ipStr, name)
+			}
+			// Traffic from the network's gateway comes from the Docker host itself,
+			// e.g. a browser reaching a published port.
+			if network.Gateway.IsValid() {
+				if gw := network.Gateway.String(); s.ipMap[gw] == "" {
+					s.ipMap[gw] = HostName
+				}
 			}
 		}
 	}

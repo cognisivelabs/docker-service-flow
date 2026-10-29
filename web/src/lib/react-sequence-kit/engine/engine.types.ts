@@ -25,6 +25,8 @@ export interface RenderedFragment {
     y: number;
     width: number;
     height: number;
+    // Y of each operand divider relative to the fragment (undefined if its message wasn't found)
+    operandOffsets?: (number | undefined)[];
 }
 
 export interface RenderedActivation {

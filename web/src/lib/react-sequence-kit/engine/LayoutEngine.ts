@@ -142,7 +142,7 @@ export class LayoutEngine {
         const renderedFragments: RenderedFragment[] = [];
         if (data.fragments) {
             // Pass 1: Initial Bounds Calculation
-            const tempFragments: (RenderedFragment & { startIndex: number, endIndex: number })[] = [];
+            const tempFragments: (RenderedFragment & { startIndex: number, endIndex: number, operandYs?: (number | undefined)[] })[] = [];
 
             data.fragments.forEach(frag => {
                 const startY = messageIdToY.get(frag.startMessageId);
@@ -171,7 +171,8 @@ export class LayoutEngine {
                             width: (maxX - minX) + (FRAGMENT_X_PADDING * 2),
                             height: (endY - startY) + FRAGMENT_HEIGHT_PADDING,
                             startIndex: startMsgIndex,
-                            endIndex: endMsgIndex
+                            endIndex: endMsgIndex,
+                            operandYs: frag.operands?.map(op => messageIdToY.get(op.atMessageId)),
                         });
                     }
                 }
@@ -207,7 +208,12 @@ export class LayoutEngine {
             }
 
             // Push final results
-            renderedFragments.push(...tempFragments.map(({ data, x, y, width, height }) => ({ data, x, y, width, height })));
+            // Place each operand divider just above the message it starts at
+            const dividerAbove = this.config.messageHeight / 2;
+            renderedFragments.push(...tempFragments.map(({ data, x, y, width, height, operandYs }) => ({
+                data, x, y, width, height,
+                operandOffsets: operandYs?.map(my => my === undefined ? undefined : my - dividerAbove - y),
+            })));
         }
 
         const totalHeight = currentY + this.config.messageHeight;

@@ -35,6 +35,7 @@ If `INTERFACE` is not set, the sniffer auto-detects the user-defined Docker brid
 - **Flow Correlation** — groups related calls (A→B→C→D) into a single flow, exactly when services propagate a trace or request ID, otherwise by timing
 - **Flow Selector** — browse and inspect individual flows, with auto-follow for live debugging
 - **Deep Packet Inspection** — HTTP method, path, headers, body, status codes, latency
+- **Redirect Chains** — a browser following redirects (e.g. an OIDC login) is shown as one flow, with each `302` and where it pointed
 - **Execution Logs** — ordered call table per flow; click a call to open the Request Inspector
 - **Request Inspector** — request/response headers and bodies (JSON pretty-printed), copy-as-curl
 - **UML Fragments** — sequence diagrams mark repeated calls (loop), concurrent calls (par) and error responses (alt)
@@ -81,13 +82,29 @@ Clicking a call in Execution Logs opens the **Request Inspector** in its place (
 
 1. **Sniffer** captures TCP packets on the Docker bridge using libpcap (runs in host network mode)
 2. **Discovery** resolves container IPs to names via the Docker API
-3. **Correlator** merges request/response pairs into calls, then groups calls into flows. A call made by a service joins:
+3. **Correlator** merges request/response pairs into calls, then groups calls into flows. A call joins:
    - the flow sharing its propagated trace/request ID (`traceparent`, `X-B3-TraceId`, `X-Request-ID` or `X-Correlation-ID`), which is exact; otherwise
-   - a request that service is still serving, spread evenly when several are in flight (approximate for concurrent requests); otherwise
-   - a request it received within the last 200ms
+   - the flow of a redirect it follows: the same client requesting a `3xx` response's `Location` within 10 seconds, or presenting the OAuth `state` from an earlier redirect within 10 minutes; otherwise
+   - a request the calling service is still serving, spread evenly when several are in flight (approximate for concurrent requests); otherwise
+   - a request the calling service received within the last 200ms
 
-   Flows settle after 2 seconds without activity.
+   Flows settle after 2 seconds without activity. Traffic from the Docker host (e.g. a browser using a published port) is shown as `host`.
 4. **Server** broadcasts flows via WebSocket to the embedded React dashboard
+
+### Redirects and OIDC logins
+
+An OIDC authorization-code login appears as a single flow: the app's `302` to the
+identity provider, the login page, the form POST and its `302` to the callback, the
+callback's server-side `/token` exchange, and the final redirect. The browser shows as
+`host`, and each redirect reply is labelled with where it pointed (e.g.
+`302 → /callback`; the full `Location` is in the Request Inspector).
+
+The login form's pause is bridged by the OAuth `state` parameter, which the identity
+provider echoes back on the callback, so the flow continues even if the user takes
+minutes to log in.
+
+Limits: only plain-HTTP traffic on the Docker network can be read. An identity
+provider behind HTTPS, or outside Docker (e.g. a cloud IdP), can't be captured.
 
 ## Architecture
 

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { getFlowLabel, getRootCall, getFlowDuration, formatTime, callsOverlap } from './flow';
+import { getFlowLabel, getRootCall, getFlowDuration, formatTime, callsOverlap, redirectTarget, timestampMicros, timelineOrder } from './flow';
 import { Flow, Call } from '@/types/flow';
 
 function makeCall(overrides: Partial<Call> = {}): Call {
@@ -133,5 +133,64 @@ describe('callsOverlap', () => {
     it("treats Go's zero time as no end time", () => {
         const pending = makeCall({ startTime: '2026-01-01T00:00:00.100Z', endTime: '0001-01-01T00:00:00Z' });
         expect(callsOverlap(pending, at('500', '600'))).toBe(true);
+    });
+});
+
+describe('redirectTarget', () => {
+    const redirect = (status: string, headers?: string) => makeCall({ status, responseHeaders: headers });
+
+    it('reduces an absolute Location to path and query', () => {
+        expect(redirectTarget(redirect('302', 'Content-Length: 0\r\nLocation: http://localhost:18080/callback?code=C1&state=S1')))
+            .toBe('/callback?code=C1&state=S1');
+    });
+
+    it('keeps a relative Location', () => {
+        expect(redirectTarget(redirect('303', 'location: /protected'))).toBe('/protected');
+    });
+
+    it('ignores non-redirect responses', () => {
+        expect(redirectTarget(redirect('200', 'Location: /elsewhere'))).toBeNull();
+    });
+
+    it('returns null when there is no Location header', () => {
+        expect(redirectTarget(redirect('304', 'ETag: "x"'))).toBeNull();
+        expect(redirectTarget(redirect('302'))).toBeNull();
+    });
+});
+
+describe('timestampMicros', () => {
+    it('keeps sub-millisecond precision', () => {
+        const a = timestampMicros('2026-10-29T10:47:02.712088123Z');
+        const b = timestampMicros('2026-10-29T10:47:02.712089Z');
+        expect(b - a).toBe(1);
+    });
+
+    it('handles timestamps without a fraction and with offsets', () => {
+        expect(timestampMicros('2026-10-29T10:47:02Z')).toBe(Date.parse('2026-10-29T10:47:02Z') * 1000);
+        expect(timestampMicros('2026-10-29T11:47:02.5+01:00')).toBe(Date.parse('2026-10-29T10:47:02Z') * 1000 + 500000);
+    });
+});
+
+describe('timelineOrder', () => {
+    const t = (us: number) => `2026-10-29T10:47:02.${String(us).padStart(6, '0')}Z`;
+
+    it('puts a nested call before its parent reply', () => {
+        // callback (0..400us) exchanges a code at /token (100..200us) before replying
+        const callback = makeCall({ callId: 'cb', startTime: t(0), endTime: t(400), status: '302' });
+        const token = makeCall({ callId: 'tok', startTime: t(100), endTime: t(200), status: '200' });
+        const order = timelineOrder([callback, token]);
+        const sequence = [...order.entries()].sort((a, b) => a[1] - b[1]).map(([id]) => id);
+        expect(sequence).toEqual(['cb-req', 'tok-req', 'tok-resp', 'cb-resp']);
+    });
+
+    it('omits replies for pending calls', () => {
+        const order = timelineOrder([makeCall({ callId: 'p', status: 'pending', startTime: t(0) })]);
+        expect([...order.keys()]).toEqual(['p-req']);
+    });
+
+    it('keeps a request before its own reply when timestamps tie', () => {
+        const fast = makeCall({ callId: 'f', startTime: t(5), endTime: t(5), status: '200' });
+        const sequence = [...timelineOrder([fast]).entries()].sort((a, b) => a[1] - b[1]).map(([id]) => id);
+        expect(sequence).toEqual(['f-req', 'f-resp']);
     });
 });

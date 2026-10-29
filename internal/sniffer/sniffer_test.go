@@ -233,3 +233,32 @@ func TestResetStreamAllowsPortReuse(t *testing.T) {
 		t.Error("first segment of a reused connection was treated as a retransmission")
 	}
 }
+
+func TestTakePendingFallsBackAcrossNAT(t *testing.T) {
+	s, _ := newTestSniffer()
+	// Request seen from the gateway; its response goes back to 127.0.0.1 (NAT).
+	natKey := natLookupKey("172.19.0.2", "8000", "63698")
+	s.activeRequests["172.19.0.1:63698-172.19.0.2:8000"] = pendingRequest{path: "/protected", clientIP: "172.19.0.1", natKey: natKey}
+	s.natIndex[natKey] = "172.19.0.1:63698-172.19.0.2:8000"
+
+	got, ok := s.takePending("127.0.0.1:63698-172.19.0.2:8000", natLookupKey("172.19.0.2", "8000", "63698"))
+	if !ok || got.path != "/protected" || got.clientIP != "172.19.0.1" {
+		t.Fatalf("takePending = %+v, %v; want the /protected request from 172.19.0.1", got, ok)
+	}
+	if len(s.activeRequests) != 0 || len(s.natIndex) != 0 {
+		t.Errorf("request not removed: %d active, %d indexed", len(s.activeRequests), len(s.natIndex))
+	}
+	if _, ok := s.takePending("127.0.0.1:63698-172.19.0.2:8000", natKey); ok {
+		t.Error("second response matched an already answered request")
+	}
+}
+
+func TestTakePendingPrefersExactMatch(t *testing.T) {
+	s, _ := newTestSniffer()
+	s.activeRequests["10.0.0.1:5000-10.0.0.2:80"] = pendingRequest{path: "/exact", clientIP: "10.0.0.1", natKey: natLookupKey("10.0.0.2", "80", "5000")}
+	s.natIndex[natLookupKey("10.0.0.2", "80", "5000")] = "10.0.0.1:5000-10.0.0.2:80"
+
+	if got, ok := s.takePending("10.0.0.1:5000-10.0.0.2:80", natLookupKey("10.0.0.2", "80", "5000")); !ok || got.path != "/exact" {
+		t.Fatalf("exact match failed: %+v %v", got, ok)
+	}
+}

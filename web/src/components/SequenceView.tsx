@@ -2,7 +2,7 @@
 
 import React, { useMemo } from 'react';
 import { Flow, Call } from '@/types/flow';
-import { callsOverlap } from '@/utils/flow';
+import { callsOverlap, redirectTarget, timelineOrder } from '@/utils/flow';
 import { SequenceDiagram, type Actor, type Message, type Fragment, DEFAULT_THEME } from '@/lib/react-sequence-kit';
 
 interface SequenceViewProps {
@@ -134,6 +134,13 @@ function detectAlt(calls: Call[]): Fragment[] {
     return fragments;
 }
 
+function replyLabel(call: Call): string {
+    // Path only: the next request arrow shows the full redirect URL.
+    const target = redirectTarget(call)?.split('?')[0];
+    const label = target ? `${call.status} → ${target}` : call.status;
+    return call.durationMs ? `${label} (${call.durationMs}ms)` : label;
+}
+
 export const SequenceView = ({ flow }: SequenceViewProps) => {
     const { actors, messages, fragments } = useMemo(() => {
         if (!flow) return { actors: [], messages: [], fragments: [] };
@@ -165,12 +172,18 @@ export const SequenceView = ({ flow }: SequenceViewProps) => {
                     id: `${call.callId}-resp`,
                     from: call.destination,
                     to: call.source,
-                    label: `${call.status}${call.durationMs ? ` (${call.durationMs}ms)` : ''}`,
+                    label: replyLabel(call),
                     type: 'reply',
                     order: index * 2 + 1,
                 });
             }
         });
+
+        // Order arrows by when they happened, not request-then-reply per call.
+        // The layout draws messages in array order, so sort them too.
+        const order = timelineOrder(collapsed);
+        msgs.forEach(m => { m.order = order.get(m.id) ?? m.order; });
+        msgs.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
 
         // Step 3: Detect par fragments
         const parFragments = detectParallel(collapsed);
