@@ -20,6 +20,7 @@ describe('getStatusColor', () => {
     it('returns red for 4xx', () => {
         expect(getStatusColor('404')).toContain('red');
         expect(getStatusColor('403')).toContain('red');
+        expect(getStatusColor('302')).toContain('sky');
     });
 
     it('returns red for 5xx', () => {

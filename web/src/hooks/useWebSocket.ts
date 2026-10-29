@@ -50,6 +50,15 @@ export const useWebSocket = (url: string) => {
               }
               break;
             }
+            case 'flow_removed': {
+              // Merged into another flow (e.g. one redirect chain); drop it.
+              setFlows(prev => {
+                const next = new Map(prev);
+                next.delete(msg.payload.flowId);
+                return next;
+              });
+              break;
+            }
           }
         }
       };

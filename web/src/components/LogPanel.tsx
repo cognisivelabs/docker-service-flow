@@ -1,6 +1,7 @@
 import React, { useEffect, useRef } from 'react';
 import { Flow, Call } from '@/types/flow';
 import { getStatusColor, getMethodBadgeClasses } from '@/utils/style';
+import { redirectTarget } from '@/utils/flow';
 import { Terminal, ArrowRight, Search } from 'lucide-react';
 
 interface LogPanelProps {
@@ -62,7 +63,7 @@ export const LogPanel = ({ flow, onSelectCall }: LogPanelProps) => {
                                             </span>
                                         </td>
                                         <td className="py-2">
-                                            <span className={`font-bold ${getStatusColor(call.status)}`}>
+                                            <span className={`font-bold ${getStatusColor(call.status)}`} title={redirectTarget(call) ? `Redirects to ${redirectTarget(call)}` : undefined}>
                                                 {call.status}
                                             </span>
                                         </td>

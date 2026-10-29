@@ -29,4 +29,5 @@ export interface Flow {
 export type WSMessage =
   | { type: 'flow_update'; payload: Flow }
   | { type: 'flow_complete'; payload: Flow }
-  | { type: 'flow_list'; payload: Flow[] };
+  | { type: 'flow_list'; payload: Flow[] }
+  | { type: 'flow_removed'; payload: { flowId: string } };

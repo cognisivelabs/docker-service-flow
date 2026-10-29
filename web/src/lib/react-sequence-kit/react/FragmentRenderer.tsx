@@ -99,9 +99,11 @@ export const FragmentRenderer: React.FC<FragmentRendererProps> = ({ renderedFrag
 
             {/* Operand dividers for alt/par fragments */}
             {data.operands && data.operands.length > 0 && data.operands.map((operand, i) => {
-                // Position dividers evenly within the fragment for now
-                // A proper implementation would use messageIdToY, but that requires layout engine changes
-                const dividerY = (height / (data.operands!.length + 1)) * (i + 1);
+                // At the operand's message when the layout found it, otherwise spaced evenly
+                const offset = renderedFragment.operandOffsets?.[i];
+                const dividerY = offset !== undefined && offset > 0 && offset < height
+                    ? offset
+                    : (height / (data.operands!.length + 1)) * (i + 1);
                 return (
                     <g key={i}>
                         <line

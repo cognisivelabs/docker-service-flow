@@ -151,4 +151,48 @@ describe('LayoutEngine', () => {
         // Header clearance check: (m1Y - frag.y) should be 45
         expect(m1Y - frag.y).toBe(45);
     });
+
+    it('should place operand dividers at their message, not evenly', () => {
+        const engine = new LayoutEngine();
+        const data: DiagramData = {
+            actors: [{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }, { id: 'c', name: 'C' }],
+            messages: [
+                { id: 'm1', from: 'a', to: 'b', label: 'request', type: 'sync' },
+                { id: 'm2', from: 'b', to: 'c', label: 'nested 1', type: 'sync' },
+                { id: 'm3', from: 'c', to: 'b', label: 'nested 1 reply', type: 'reply' },
+                { id: 'm4', from: 'b', to: 'c', label: 'nested 2', type: 'sync' },
+                { id: 'm5', from: 'b', to: 'a', label: 'error reply', type: 'reply' },
+            ],
+            fragments: [{
+                id: 'alt', type: 'alt', label: 'response', startMessageId: 'm1', endMessageId: 'm5',
+                operands: [{ condition: 'error', atMessageId: 'm5' }],
+            }],
+        };
+
+        const frame = engine.calculate(data);
+        const frag = frame.fragments[0];
+        const m5Y = frame.messages.find(m => m.data.id === 'm5')!.p1.y;
+        const offset = frag.operandOffsets![0]!;
+
+        // Divider sits just above the error reply, near the bottom - not at the middle
+        expect(frag.y + offset).toBeLessThan(m5Y);
+        expect(frag.y + offset).toBeGreaterThan(frame.messages.find(m => m.data.id === 'm4')!.p1.y);
+        expect(offset).toBeGreaterThan(frag.height / 2);
+    });
+
+    it('should leave operandOffsets undefined for unknown messages', () => {
+        const engine = new LayoutEngine();
+        const frame = engine.calculate({
+            actors: [{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }],
+            messages: [
+                { id: 'm1', from: 'a', to: 'b', label: 'x', type: 'sync' },
+                { id: 'm2', from: 'b', to: 'a', label: 'y', type: 'reply' },
+            ],
+            fragments: [{
+                id: 'f', type: 'alt', label: 'l', startMessageId: 'm1', endMessageId: 'm2',
+                operands: [{ condition: 'c', atMessageId: 'missing' }],
+            }],
+        });
+        expect(frame.fragments[0].operandOffsets).toEqual([undefined]);
+    });
 });
