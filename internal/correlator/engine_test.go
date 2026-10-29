@@ -406,3 +406,142 @@ func TestLateResponseAfterSettlingIsPublished(t *testing.T) {
 		t.Errorf("published call status = %q, want 200", flow.Calls[0].Status)
 	}
 }
+
+func makeRedirectResponse(srcIP, srcPort, dstIP, dstPort, status, location string) []byte {
+	event := RawEvent{
+		EventType:       "response",
+		Metadata:        map[string]string{},
+		ResponseStatus:  status,
+		ResponseHeaders: "Content-Length: 0\r\nLocation: " + location,
+		SrcIP:           srcIP,
+		SrcPort:         srcPort,
+		DstIP:           dstIP,
+		DstPort:         dstPort,
+	}
+	data, _ := json.Marshal(event)
+	return data
+}
+
+// An OIDC authorization-code login driven by a browser on the Docker host:
+// app redirects to the IdP, the user pauses on the login form (the flow settles),
+// the form POST redirects to the app's callback, which exchanges the code
+// server-side and redirects back to the protected page.
+func TestOIDCLoginIsOneFlow(t *testing.T) {
+	b := &mockBroadcaster{}
+	e := NewEngineWithConfig(b, 50*time.Millisecond, 100*time.Millisecond, 5*time.Second)
+	const host, app, idp = "10.0.0.1", "10.0.0.2", "10.0.0.3"
+
+	// 1. Unauthenticated request; app redirects to the IdP with a state.
+	e.HandleEvent(makeRequestEvent("host", "app", "GET", "/protected", host, "50001", app, "8000"))
+	e.HandleEvent(makeRedirectResponse(app, "8000", host, "50001", "302",
+		"http://localhost:18081/auth?client_id=app&redirect_uri=http%3A%2F%2Flocalhost%3A18080%2Fcallback&state=S1"))
+	// 2. Browser follows to the IdP, which shows the login form.
+	e.HandleEvent(makeRequestEvent("host", "idp", "GET", "/auth?client_id=app&state=S1", host, "50002", idp, "8000"))
+	e.HandleEvent(makeResponseEvent(idp, "8000", host, "50002", "200", 1))
+
+	// The user takes a while to log in; the flow settles.
+	time.Sleep(700 * time.Millisecond)
+
+	// 3. Login form POST (no state, like Keycloak); redirects to the callback.
+	e.HandleEvent(makeRequestEvent("host", "idp", "POST", "/login-actions/authenticate?session_code=x", host, "50003", idp, "8000"))
+	e.HandleEvent(makeRedirectResponse(idp, "8000", host, "50003", "302", "http://localhost:18080/callback?code=C1&state=S1"))
+	// 4. Callback: app exchanges the code at the IdP, then redirects to the page.
+	e.HandleEvent(makeRequestEvent("host", "app", "GET", "/callback?code=C1&state=S1", host, "50004", app, "8000"))
+	e.HandleEvent(makeRequestEvent("app", "idp", "POST", "/token", app, "60001", idp, "8000"))
+	e.HandleEvent(makeResponseEvent(idp, "8000", app, "60001", "200", 2))
+	e.HandleEvent(makeRedirectResponse(app, "8000", host, "50004", "302", "/protected"))
+	// 5. Browser lands on the protected page.
+	e.HandleEvent(makeRequestEvent("host", "app", "GET", "/protected", host, "50005", app, "8000"))
+
+	flows := e.GetAllFlows()
+	if len(flows) != 1 {
+		for _, f := range flows {
+			t.Logf("%s: %d calls, root %s", f.FlowID, len(f.Calls), f.Calls[0].Path)
+		}
+		t.Fatalf("expected the whole login in 1 flow, got %d", len(flows))
+	}
+	want := []string{"/protected", "/auth?client_id=app&state=S1", "/login-actions/authenticate?session_code=x",
+		"/callback?code=C1&state=S1", "/token", "/protected"}
+	f := flows[0]
+	if len(f.Calls) != len(want) {
+		t.Fatalf("got %d calls, want %d", len(f.Calls), len(want))
+	}
+	for i, c := range f.Calls {
+		if c.Path != want[i] || c.Order != i {
+			t.Errorf("call %d = %s (order %d), want %s", i, c.Path, c.Order, want[i])
+		}
+	}
+	if f.Status != "active" {
+		t.Errorf("reactivated flow status = %s, want active", f.Status)
+	}
+
+	removed := 0
+	for _, raw := range b.messages {
+		var msg WSMessage
+		json.Unmarshal(raw, &msg)
+		if msg.Type == "flow_removed" {
+			removed++
+		}
+	}
+	if removed != 1 {
+		t.Errorf("expected 1 flow_removed broadcast for the merged login-form flow, got %d", removed)
+	}
+}
+
+func TestRedirectOnlyLinksTheSameClient(t *testing.T) {
+	b := &mockBroadcaster{}
+	e := newTestEngine(b)
+
+	e.HandleEvent(makeRequestEvent("host", "app", "GET", "/old", "10.0.0.1", "50001", "10.0.0.2", "8000"))
+	e.HandleEvent(makeRedirectResponse("10.0.0.2", "8000", "10.0.0.1", "50001", "301", "/new"))
+	// A different client requesting the same path is unrelated.
+	e.HandleEvent(makeRequestEvent("worker", "app", "GET", "/new", "10.0.0.9", "50002", "10.0.0.2", "8000"))
+	// The redirected client following it joins the flow.
+	e.HandleEvent(makeRequestEvent("host", "app", "GET", "/new", "10.0.0.1", "50003", "10.0.0.2", "8000"))
+
+	for _, f := range e.GetAllFlows() {
+		root := f.Calls[0]
+		switch root.Source {
+		case "host":
+			if len(f.Calls) != 2 {
+				t.Errorf("host's redirect chain has %d calls, want 2", len(f.Calls))
+			}
+		case "worker":
+			if len(f.Calls) != 1 {
+				t.Errorf("unrelated worker request was linked into another flow")
+			}
+		}
+	}
+}
+
+func TestNonRedirectResponseIsNotFollowed(t *testing.T) {
+	b := &mockBroadcaster{}
+	e := newTestEngine(b)
+
+	e.HandleEvent(makeRequestEvent("host", "app", "GET", "/a", "10.0.0.1", "50001", "10.0.0.2", "8000"))
+	// A 200 that happens to carry a Location header is not a redirect.
+	e.HandleEvent(makeRedirectResponse("10.0.0.2", "8000", "10.0.0.1", "50001", "200", "/b"))
+	time.Sleep(80 * time.Millisecond) // past the causal window
+	e.HandleEvent(makeRequestEvent("host", "app", "GET", "/b", "10.0.0.1", "50002", "10.0.0.2", "8000"))
+
+	if n := len(e.GetAllFlows()); n != 2 {
+		t.Errorf("expected 2 separate flows, got %d", n)
+	}
+}
+
+func TestRingBufferRemove(t *testing.T) {
+	rb := newRingBuffer(3)
+	for _, id := range []string{"A", "B", "C", "D"} {
+		rb.Push(&Flow{FlowID: id})
+	}
+	rb.Remove("C")
+	rb.Remove("missing")
+	all := rb.All()
+	if len(all) != 2 || all[0].FlowID != "B" || all[1].FlowID != "D" {
+		t.Errorf("after removing C got %v", all)
+	}
+	rb.Push(&Flow{FlowID: "E"})
+	if all = rb.All(); len(all) != 3 || all[2].FlowID != "E" {
+		t.Errorf("push after remove got %v", all)
+	}
+}
