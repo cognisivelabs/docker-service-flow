@@ -38,6 +38,7 @@ type Sniffer struct {
 	activeRequests map[string]pendingRequest
 	partials       map[string]*partialMessage
 	streams        map[string]streamState
+	natIndex       map[string]string // server ip:port|client port → request key
 }
 
 type TrafficEvent struct {
@@ -61,6 +62,8 @@ type pendingRequest struct {
 	method    string
 	path      string
 	startTime time.Time
+	clientIP  string
+	natKey    string
 }
 
 // streamState tracks how far into one direction of a TCP connection we've seen,
@@ -93,6 +96,7 @@ func NewSniffer(device string, resolver ServiceResolver, output OutputChannel) *
 		activeRequests: make(map[string]pendingRequest),
 		partials:       make(map[string]*partialMessage),
 		streams:        make(map[string]streamState),
+		natIndex:       make(map[string]string),
 	}
 }
 
@@ -150,6 +154,7 @@ func (s *Sniffer) cleanupStaleRequests() {
 		for key, req := range s.activeRequests {
 			if now.Sub(req.startTime) > 30*time.Second {
 				delete(s.activeRequests, key)
+				delete(s.natIndex, req.natKey)
 			}
 		}
 		for key, st := range s.streams {
@@ -264,12 +269,16 @@ func (s *Sniffer) processPacket(packet gopacket.Packet) {
 			return
 		}
 
+		natKey := natLookupKey(dstIP, tcp.DstPort.String(), tcp.SrcPort.String())
 		s.mu.Lock()
 		s.activeRequests[reqKey] = pendingRequest{
 			method:    method,
 			path:      path,
 			startTime: time.Now(),
+			clientIP:  srcIP,
+			natKey:    natKey,
 		}
+		s.natIndex[natKey] = reqKey
 		s.mu.Unlock()
 
 		metadata["method"] = method
@@ -294,12 +303,13 @@ func (s *Sniffer) processPacket(packet gopacket.Packet) {
 		// The request must reach the correlator before its response does.
 		s.flushPartial(respKey)
 
-		s.mu.Lock()
-		pending, exists := s.activeRequests[respKey]
-		if exists {
-			delete(s.activeRequests, respKey)
+		pending, exists := s.takePending(respKey, natLookupKey(srcIP, tcp.SrcPort.String(), tcp.DstPort.String()))
+		if exists && pending.clientIP != dstIP {
+			// NAT showed the client under a different address on the way back
+			// (e.g. localhost via a published port); report the request's.
+			dstIP = pending.clientIP
+			dstService = s.resolver.GetServiceName(dstIP)
 		}
-		s.mu.Unlock()
 
 		if exists {
 			duration := time.Since(pending.startTime).Milliseconds()
@@ -321,6 +331,32 @@ func (s *Sniffer) processPacket(packet gopacket.Packet) {
 			s.bufferOrEmit(reqKey, event, payloadStr)
 		}
 	}
+}
+
+// natLookupKey identifies a connection by its server address and client port,
+// which survive NAT even when the client address appears differently per direction.
+func natLookupKey(serverIP, serverPort, clientPort string) string {
+	return serverIP + ":" + serverPort + "|" + clientPort
+}
+
+// takePending removes and returns the request a response answers: by exact
+// connection key, or failing that by server address and client port.
+func (s *Sniffer) takePending(respKey, natKey string) (pendingRequest, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key := respKey
+	pending, ok := s.activeRequests[key]
+	if !ok {
+		if key, ok = s.natIndex[natKey]; ok {
+			pending, ok = s.activeRequests[key]
+		}
+	}
+	if !ok {
+		return pendingRequest{}, false
+	}
+	delete(s.activeRequests, key)
+	delete(s.natIndex, pending.natKey)
+	return pending, true
 }
 
 // isRetransmission reports whether every byte of this segment was already seen on
